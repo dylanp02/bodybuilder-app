@@ -1,6 +1,7 @@
 {
   "expo": {
     "name": "BodybuilderApp",
+    "scheme": "bodybuilderapp",
     "slug": "BodybuilderApp",
     "version": "1.0.0",
     "orientation": "portrait",
