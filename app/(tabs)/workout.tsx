@@ -1,18 +1,18 @@
 // app/(tabs)/workout.tsx
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
   ScrollView, Alert, Modal, FlatList, Switch,
 } from 'react-native';
+import { router } from 'expo-router';
 import { supabase, getCurrentUser } from '../../lib/supabase';
 import { Colors, Spacing, FontSize, Radius } from '../../constants/theme';
 import { Exercise, MuscleGroup } from '../../lib/types';
 
-interface PendingSet {
+interface ExerciseCard {
+  id: string;
   exercise: Exercise;
-  setNumber: number;
-  reps: string;
-  weight: string;
+  sets: { reps: string; weight: string }[];
 }
 
 const MUSCLE_GROUPS: { key: 'all' | MuscleGroup; label: string }[] = [
@@ -28,20 +28,51 @@ const MUSCLE_GROUPS: { key: 'all' | MuscleGroup; label: string }[] = [
   { key: 'cardio',    label: 'Cardio' },
 ];
 
+const ALL_PLATE_SIZES = [45, 35, 25, 10, 5, 2.5, 1];
+
+const BAR_PRESETS = [
+  { label: '45 Standard', value: 45 },
+  { label: "35 Women's", value: 35 },
+  { label: '105 Leg Press', value: 105 },
+];
+
+const TEMPLATES = [
+  {
+    name: 'Push Day',
+    exercises: ['Bench Press', 'Overhead Press', 'Incline Dumbbell Press', 'Tricep Pushdown', 'Lateral Raise'],
+  },
+  {
+    name: 'Pull Day',
+    exercises: ['Deadlift', 'Pull-Up', 'Barbell Row', 'Bicep Curl', 'Face Pull'],
+  },
+  {
+    name: 'Leg Day',
+    exercises: ['Squat', 'Romanian Deadlift', 'Leg Press', 'Leg Curl', 'Calf Raise'],
+  },
+];
+
+const formatElapsed = (secs: number) => {
+  const m = Math.floor(secs / 60).toString().padStart(2, '0');
+  const s = (secs % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
+};
+
 export default function WorkoutScreen() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
+
+  // Workout state
+  const [workoutActive, setWorkoutActive] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [workoutName, setWorkoutName] = useState('');
-  const [pendingSets, setPendingSets] = useState<PendingSet[]>([]);
-  const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
-  const [reps, setReps] = useState('');
-  const [weight, setWeight] = useState('');
+  const [cards, setCards] = useState<ExerciseCard[]>([]);
   const [saving, setSaving] = useState(false);
 
   // Picker modal
   const [showPicker, setShowPicker] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | MuscleGroup>('all');
+  const [activeEquipment, setActiveEquipment] = useState('all');
 
-  // Create exercise form (shown inside picker)
+  // Create exercise form (inside picker)
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newName, setNewName] = useState('');
   const [newMuscleGroup, setNewMuscleGroup] = useState<MuscleGroup>('chest');
@@ -49,69 +80,125 @@ export default function WorkoutScreen() {
   const [newIsCompound, setNewIsCompound] = useState(false);
   const [creating, setCreating] = useState(false);
 
+  // Plate calculator
+  const [calcOpen, setCalcOpen] = useState(false);
+  const [barWeight, setBarWeight] = useState(45);
+  const [customBarText, setCustomBarText] = useState('');
+  const [disabledPlates, setDisabledPlates] = useState<number[]>([]);
+  const [targetWeight, setTargetWeight] = useState('');
+
   useEffect(() => { loadExercises(); }, []);
+
+  // Stopwatch
+  useEffect(() => {
+    if (!workoutActive) return;
+    const timer = setInterval(() => setElapsed(s => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [workoutActive]);
 
   const loadExercises = async () => {
     const { data } = await supabase.from('exercises').select('*').order('name');
     if (data) setExercises(data);
   };
 
-  const [activeEquipment, setActiveEquipment] = useState('all');
-
-  // Equipment options derived from whichever muscle group is active
-  const equipmentOptions = useMemo(() => {
-    const base = activeTab === 'all' ? exercises : exercises.filter(e => e.muscle_group === activeTab);
-    const seen = new Set<string>();
-    for (const ex of base) { if (ex.equipment) seen.add(ex.equipment); }
-    return ['all', ...Array.from(seen).sort()];
-  }, [exercises, activeTab]);
-
   const filteredExercises = useMemo(() => {
-    const byGroup = activeTab === 'all' ? exercises : exercises.filter(e => e.muscle_group === activeTab);
-    return activeEquipment === 'all' ? byGroup : byGroup.filter(e => e.equipment === activeEquipment);
+    const byGroup = activeTab === 'all'
+      ? exercises
+      : exercises.filter(e => e.muscle_group.toLowerCase() === activeTab.toLowerCase());
+    return activeEquipment === 'all'
+      ? byGroup
+      : byGroup.filter(e => (e.equipment ?? '').toLowerCase() === activeEquipment.toLowerCase());
   }, [exercises, activeTab, activeEquipment]);
 
-  // Pending sets grouped by exercise, preserving insertion order
-  const exerciseGroups = useMemo(() => {
-    const groups = new Map<string, { exercise: Exercise; sets: PendingSet[] }>();
-    for (const set of pendingSets) {
-      if (!groups.has(set.exercise.id)) {
-        groups.set(set.exercise.id, { exercise: set.exercise, sets: [] });
+  // Plate calculator greedy result
+  const plateResult = useMemo(() => {
+    const target = parseFloat(targetWeight);
+    if (!target || target <= barWeight) return null;
+    const available = ALL_PLATE_SIZES.filter(p => !disabledPlates.includes(p));
+    let remaining = Math.round(((target - barWeight) / 2) * 100) / 100;
+    const result: { plate: number; count: number }[] = [];
+    for (const plate of available) {
+      if (remaining < 0.01) break;
+      const count = Math.floor(remaining / plate + 0.001);
+      if (count > 0) {
+        result.push({ plate, count });
+        remaining = Math.round((remaining - plate * count) * 100) / 100;
       }
-      groups.get(set.exercise.id)!.sets.push(set);
     }
-    return Array.from(groups.values());
-  }, [pendingSets]);
+    if (remaining > 0.5) return null;
+    return result;
+  }, [targetWeight, barWeight, disabledPlates]);
 
-  const openPicker = () => {
-    setShowCreateForm(false);
-    setShowPicker(true);
+  // ── Workout start ──
+
+  const startBlankWorkout = () => {
+    setWorkoutName('');
+    setCards([]);
+    setElapsed(0);
+    setWorkoutActive(true);
   };
 
-  const selectExercise = (ex: Exercise) => {
-    setSelectedExercise(ex);
-    setReps('');
-    setWeight('');
+  const startFromTemplate = (template: typeof TEMPLATES[0]) => {
+    const templateCards: ExerciseCard[] = [];
+    for (const name of template.exercises) {
+      const ex = exercises.find(e => e.name.toLowerCase() === name.toLowerCase());
+      if (ex) {
+        templateCards.push({
+          id: `${ex.id}-${Date.now()}-${Math.random()}`,
+          exercise: ex,
+          sets: [{ reps: '', weight: '' }],
+        });
+      }
+    }
+    setWorkoutName(template.name);
+    setCards(templateCards);
+    setElapsed(0);
+    setWorkoutActive(true);
+  };
+
+  // ── Card operations ──
+
+  const addCard = (exercise: Exercise) => {
+    setCards(prev => [...prev, {
+      id: `${exercise.id}-${Date.now()}`,
+      exercise,
+      sets: [{ reps: '', weight: '' }],
+    }]);
     setShowPicker(false);
     setShowCreateForm(false);
   };
 
-  const addSet = () => {
-    if (!selectedExercise) return;
-    if (!reps) { Alert.alert('Enter reps'); return; }
-    const existingCount = pendingSets.filter(s => s.exercise.id === selectedExercise.id).length;
-    setPendingSets(prev => [...prev, {
-      exercise: selectedExercise,
-      setNumber: existingCount + 1,
-      reps,
-      weight,
-    }]);
-    setReps('');
-    setWeight('');
+  const removeCard = (cardId: string) => {
+    setCards(prev => prev.filter(c => c.id !== cardId));
   };
 
-  const removeSet = (setRef: PendingSet) => {
-    setPendingSets(prev => prev.filter(s => s !== setRef));
+  const addSet = (cardId: string) => {
+    setCards(prev => prev.map(c =>
+      c.id === cardId ? { ...c, sets: [...c.sets, { reps: '', weight: '' }] } : c
+    ));
+  };
+
+  const removeSet = (cardId: string, index: number) => {
+    setCards(prev => prev.map(c => {
+      if (c.id !== cardId || c.sets.length === 1) return c;
+      return { ...c, sets: c.sets.filter((_, i) => i !== index) };
+    }));
+  };
+
+  const updateSet = (cardId: string, index: number, field: 'reps' | 'weight', value: string) => {
+    setCards(prev => prev.map(c => {
+      if (c.id !== cardId) return c;
+      const sets = [...c.sets];
+      sets[index] = { ...sets[index], [field]: value };
+      return { ...c, sets };
+    }));
+  };
+
+  // ── Picker helpers ──
+
+  const openPicker = () => {
+    setShowCreateForm(false);
+    setShowPicker(true);
   };
 
   const createExercise = async () => {
@@ -135,14 +222,23 @@ export default function WorkoutScreen() {
       setNewName('');
       setNewEquipment('');
       setNewIsCompound(false);
-      selectExercise(data);
+      addCard(data);
     }
     setCreating(false);
   };
 
-  const saveWorkout = async () => {
-    if (!workoutName) { Alert.alert('Name your workout'); return; }
-    if (pendingSets.length === 0) { Alert.alert('Log at least one set'); return; }
+  // ── Finish workout ──
+
+  const finishWorkout = async () => {
+    if (!workoutName.trim()) { Alert.alert('Name your workout'); return; }
+
+    const populated = cards.flatMap(c =>
+      c.sets
+        .map((s, i) => ({ card: c, setIndex: i, ...s }))
+        .filter(s => s.reps.trim() || s.weight.trim())
+    );
+    if (populated.length === 0) { Alert.alert('Log at least one set'); return; }
+
     setSaving(true);
     const user = await getCurrentUser();
     if (!user) { setSaving(false); return; }
@@ -150,7 +246,7 @@ export default function WorkoutScreen() {
     const today = new Date().toISOString().split('T')[0];
     const { data: workout, error: workoutError } = await supabase
       .from('workouts')
-      .insert({ user_id: user.id, name: workoutName, date: today })
+      .insert({ user_id: user.id, name: workoutName.trim(), date: today })
       .select()
       .single();
 
@@ -161,10 +257,10 @@ export default function WorkoutScreen() {
     }
 
     const { error: setsError } = await supabase.from('workout_sets').insert(
-      pendingSets.map(s => ({
+      populated.map(s => ({
         workout_id: workout.id,
-        exercise_id: s.exercise.id,
-        set_number: s.setNumber,
+        exercise_id: s.card.exercise.id,
+        set_number: s.setIndex + 1,
         reps: parseInt(s.reps) || null,
         weight_lbs: parseFloat(s.weight) || null,
       }))
@@ -172,114 +268,229 @@ export default function WorkoutScreen() {
 
     if (setsError) {
       Alert.alert('Error saving sets', setsError.message);
+      setSaving(false);
     } else {
-      Alert.alert('Workout saved! 💪', `${pendingSets.length} sets logged.`);
       setWorkoutName('');
-      setPendingSets([]);
-      setSelectedExercise(null);
+      setCards([]);
+      setElapsed(0);
+      setWorkoutActive(false);
+      setSaving(false);
+      router.push(`/workout/${workout.id}`);
     }
-    setSaving(false);
   };
+
+  // ── Plate calculator ──
+
+  const togglePlate = (plate: number) => {
+    setDisabledPlates(prev =>
+      prev.includes(plate) ? prev.filter(p => p !== plate) : [...prev, plate]
+    );
+  };
+
+  // ── Render ──
 
   return (
     <>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-        <Text style={styles.screenTitle}>Log Workout</Text>
-
-        <TextInput
-          style={styles.input}
-          placeholder='Workout name (e.g. "Push Day A")'
-          placeholderTextColor={Colors.textDisabled}
-          value={workoutName}
-          onChangeText={setWorkoutName}
-        />
-
-        {/* Active exercise card */}
-        <View style={styles.card}>
-          <Text style={styles.cardLabel}>Current Exercise</Text>
-          <Pressable style={styles.exercisePickerRow} onPress={openPicker}>
-            <Text style={[styles.exercisePickerText, !selectedExercise && styles.exercisePickerPlaceholder]}>
-              {selectedExercise ? selectedExercise.name : 'Select Exercise'}
-            </Text>
-            <Text style={styles.chevron}>›</Text>
-          </Pressable>
-
-          {selectedExercise && (
+      <View style={styles.screen}>
+        <ScrollView
+          style={styles.container}
+          contentContainerStyle={styles.content}
+          keyboardShouldPersistTaps="handled"
+        >
+          {!workoutActive ? (
+            // ── STATE 1: No active workout ──
             <>
-              <View style={styles.setInputRow}>
-                <TextInput
-                  style={[styles.input, styles.setInput]}
-                  placeholder="Reps"
-                  placeholderTextColor={Colors.textDisabled}
-                  value={reps}
-                  onChangeText={setReps}
-                  keyboardType="numeric"
-                />
-                <TextInput
-                  style={[styles.input, styles.setInput]}
-                  placeholder="Weight (lbs)"
-                  placeholderTextColor={Colors.textDisabled}
-                  value={weight}
-                  onChangeText={setWeight}
-                  keyboardType="decimal-pad"
-                />
-                <Pressable style={styles.addSetButton} onPress={addSet}>
-                  <Text style={styles.addSetButtonText}>+ Set</Text>
+              <Text style={styles.screenTitle}>Workout</Text>
+
+              <Pressable style={styles.startBlankButton} onPress={startBlankWorkout}>
+                <Text style={styles.startBlankText}>Start Blank Workout</Text>
+              </Pressable>
+
+              <Text style={styles.sectionHeader}>Templates</Text>
+
+              {TEMPLATES.map(template => (
+                <Pressable
+                  key={template.name}
+                  style={styles.templateCard}
+                  onPress={() => startFromTemplate(template)}
+                >
+                  <Text style={styles.templateName}>{template.name}</Text>
+                  <Text style={styles.templateExercises} numberOfLines={2}>
+                    {template.exercises.join(' · ')}
+                  </Text>
+                </Pressable>
+              ))}
+
+              <View style={styles.proCard}>
+                <Text style={styles.proLabel}>PRO</Text>
+                <Text style={styles.proTitle}>Create Custom Template</Text>
+                <Text style={styles.proSub}>Save your own workout templates — coming soon</Text>
+              </View>
+            </>
+          ) : (
+            // ── STATE 2: Workout active ──
+            <>
+              <View style={styles.activeHeader}>
+                <Text style={styles.stopwatch}>{formatElapsed(elapsed)}</Text>
+                <Pressable
+                  style={[styles.finishButton, saving && styles.finishButtonDisabled]}
+                  onPress={finishWorkout}
+                  disabled={saving}
+                >
+                  <Text style={styles.finishButtonText}>
+                    {saving ? 'Saving...' : 'Finish Workout'}
+                  </Text>
                 </Pressable>
               </View>
 
-              {pendingSets
-                .filter(s => s.exercise.id === selectedExercise.id)
-                .map((set, idx) => (
-                  <View key={idx} style={styles.setRow}>
-                    <Text style={styles.setDetail}>
-                      Set {set.setNumber} · {set.reps} reps{set.weight ? ` · ${set.weight} lbs` : ''}
-                    </Text>
-                    <Pressable onPress={() => removeSet(set)}>
-                      <Text style={styles.removeSet}>✕</Text>
+              <TextInput
+                style={styles.input}
+                placeholder='Workout name (e.g. "Push Day A")'
+                placeholderTextColor={Colors.textDisabled}
+                value={workoutName}
+                onChangeText={setWorkoutName}
+              />
+
+              {cards.map(card => (
+                <View key={card.id} style={styles.card}>
+                  <View style={styles.cardHeader}>
+                    <View style={styles.cardHeaderLeft}>
+                      <Text style={styles.cardExerciseName}>{card.exercise.name}</Text>
+                      <Text style={styles.cardMuscleGroup}>{card.exercise.muscle_group}</Text>
+                    </View>
+                    <Pressable onPress={() => removeCard(card.id)} style={styles.cardDeleteHit}>
+                      <Text style={styles.cardDeleteText}>✕</Text>
                     </Pressable>
                   </View>
-                ))
-              }
-            </>
-          )}
-        </View>
 
-        {/* Previously logged exercises (all except the active one) */}
-        {exerciseGroups
-          .filter(g => g.exercise.id !== selectedExercise?.id)
-          .map(group => (
-            <View key={group.exercise.id} style={styles.card}>
-              <View style={styles.groupHeader}>
-                <Text style={styles.cardLabel}>{group.exercise.name}</Text>
-                <Pressable onPress={() => selectExercise(group.exercise)}>
-                  <Text style={styles.resumeText}>Resume</Text>
-                </Pressable>
-              </View>
-              {group.sets.map((set, idx) => (
-                <View key={idx} style={styles.setRow}>
-                  <Text style={styles.setDetail}>
-                    Set {set.setNumber} · {set.reps} reps{set.weight ? ` · ${set.weight} lbs` : ''}
-                  </Text>
-                  <Pressable onPress={() => removeSet(set)}>
-                    <Text style={styles.removeSet}>✕</Text>
+                  <View style={styles.setColHeader}>
+                    <Text style={[styles.setColLabel, styles.colNum]}>#</Text>
+                    <Text style={[styles.setColLabel, styles.colInput]}>Reps</Text>
+                    <Text style={[styles.setColLabel, styles.colInput]}>Weight (lbs)</Text>
+                    <View style={styles.colRemove} />
+                  </View>
+
+                  {card.sets.map((set, idx) => (
+                    <View key={idx} style={styles.setRow}>
+                      <Text style={[styles.setNum, styles.colNum]}>{idx + 1}</Text>
+                      <TextInput
+                        style={[styles.setInput, styles.colInput]}
+                        placeholder="—"
+                        placeholderTextColor={Colors.textDisabled}
+                        value={set.reps}
+                        onChangeText={v => updateSet(card.id, idx, 'reps', v)}
+                        keyboardType="numeric"
+                      />
+                      <TextInput
+                        style={[styles.setInput, styles.colInput]}
+                        placeholder="—"
+                        placeholderTextColor={Colors.textDisabled}
+                        value={set.weight}
+                        onChangeText={v => updateSet(card.id, idx, 'weight', v)}
+                        keyboardType="decimal-pad"
+                      />
+                      <Pressable style={styles.colRemove} onPress={() => removeSet(card.id, idx)}>
+                        <Text style={styles.setRemoveText}>✕</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+
+                  <Pressable style={styles.addSetButton} onPress={() => addSet(card.id)}>
+                    <Text style={styles.addSetButtonText}>+ Add Set</Text>
                   </Pressable>
                 </View>
               ))}
-            </View>
-          ))
-        }
 
-        <Pressable
-          style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-          onPress={saveWorkout}
-          disabled={saving}
-        >
-          <Text style={styles.saveButtonText}>
-            {saving ? 'Saving...' : 'Save Workout'}
-          </Text>
-        </Pressable>
-      </ScrollView>
+              <Pressable style={styles.addExerciseButton} onPress={openPicker}>
+                <Text style={styles.addExerciseText}>+ Add Exercise</Text>
+              </Pressable>
+            </>
+          )}
+        </ScrollView>
+
+        {/* ── Plate Calculator — always visible ── */}
+        <View style={styles.plateCalc}>
+          <Pressable style={styles.plateCalcHandle} onPress={() => setCalcOpen(v => !v)}>
+            <Text style={styles.plateCalcHandleText}>
+              Plate Calculator {calcOpen ? '▲' : '▼'}
+            </Text>
+          </Pressable>
+
+          {calcOpen && (
+            <View style={styles.plateCalcBody}>
+              <Text style={styles.calcLabel}>Bar Weight</Text>
+              <View style={styles.chipRow}>
+                {BAR_PRESETS.map(p => (
+                  <Pressable
+                    key={p.value}
+                    style={[styles.chip, barWeight === p.value && !customBarText && styles.chipActive]}
+                    onPress={() => { setBarWeight(p.value); setCustomBarText(''); }}
+                  >
+                    <Text style={[styles.chipText, barWeight === p.value && !customBarText && styles.chipTextActive]}>
+                      {p.label}
+                    </Text>
+                  </Pressable>
+                ))}
+                <TextInput
+                  style={[styles.calcInput, customBarText ? styles.calcInputActive : null]}
+                  placeholder="Custom"
+                  placeholderTextColor={Colors.textDisabled}
+                  value={customBarText}
+                  onChangeText={t => {
+                    setCustomBarText(t);
+                    const n = parseFloat(t);
+                    if (!isNaN(n) && n > 0) setBarWeight(n);
+                  }}
+                  keyboardType="decimal-pad"
+                />
+              </View>
+
+              <Text style={styles.calcLabel}>Available Plates</Text>
+              <View style={styles.chipRow}>
+                {ALL_PLATE_SIZES.map(p => (
+                  <Pressable
+                    key={p}
+                    style={[styles.chip, !disabledPlates.includes(p) && styles.chipActive]}
+                    onPress={() => togglePlate(p)}
+                  >
+                    <Text style={[styles.chipText, !disabledPlates.includes(p) && styles.chipTextActive]}>
+                      {p}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Text style={styles.calcLabel}>Target Weight (lbs)</Text>
+              <TextInput
+                style={styles.calcInputFull}
+                placeholder="e.g. 225"
+                placeholderTextColor={Colors.textDisabled}
+                value={targetWeight}
+                onChangeText={setTargetWeight}
+                keyboardType="decimal-pad"
+              />
+
+              {targetWeight !== '' && (
+                <View style={styles.calcResult}>
+                  {plateResult && plateResult.length > 0 ? (
+                    <Text style={styles.calcResultText}>
+                      Each side: {plateResult.map(r => `${r.count} × ${r.plate}`).join(', ')}
+                    </Text>
+                  ) : plateResult && plateResult.length === 0 ? (
+                    <Text style={styles.calcResultText}>Bar only</Text>
+                  ) : (
+                    <Text style={styles.calcResultError}>
+                      {parseFloat(targetWeight) <= barWeight
+                        ? 'Target must exceed bar weight'
+                        : "Can't reach this weight with available plates"}
+                    </Text>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      </View>
 
       {/* ── Exercise Picker Modal ── */}
       <Modal
@@ -291,7 +502,7 @@ export default function WorkoutScreen() {
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>
-              {showCreateForm ? 'New Exercise' : 'Select Exercise'}
+              {showCreateForm ? 'New Exercise' : 'Add Exercise'}
             </Text>
             <Pressable onPress={() => setShowPicker(false)}>
               <Text style={styles.modalClose}>Done</Text>
@@ -357,7 +568,7 @@ export default function WorkoutScreen() {
                 disabled={creating}
               >
                 <Text style={styles.saveButtonText}>
-                  {creating ? 'Creating...' : 'Create & Select'}
+                  {creating ? 'Creating...' : 'Create & Add'}
                 </Text>
               </Pressable>
 
@@ -367,33 +578,35 @@ export default function WorkoutScreen() {
             </ScrollView>
           ) : (
             <>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.tabRowContent}
-                style={styles.tabRow}
-              >
-                {MUSCLE_GROUPS.map(g => (
-                  <Pressable
-                    key={g.key}
-                    style={[styles.tab, activeTab === g.key && styles.tabActive]}
-                    onPress={() => { setActiveTab(g.key); setActiveEquipment('all'); }}
-                  >
-                    <Text style={[styles.tabText, activeTab === g.key && styles.tabTextActive]}>
-                      {g.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </ScrollView>
-
-              {activeTab !== 'cardio' && (
+              <View style={styles.filterRowWrap}>
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.tabRowContent}
                   style={styles.tabRow}
                 >
-                  {equipmentOptions.map(eq => (
+                  {MUSCLE_GROUPS.map(g => (
+                    <Pressable
+                      key={g.key}
+                      style={[styles.tab, activeTab === g.key && styles.tabActive]}
+                      onPress={() => { setActiveTab(g.key); setActiveEquipment('all'); }}
+                    >
+                      <Text style={[styles.tabText, activeTab === g.key && styles.tabTextActive]}>
+                        {g.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+
+              <View style={styles.filterRowWrap}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.tabRowContent}
+                  style={styles.tabRow}
+                >
+                  {['all', 'Barbell', 'Bodyweight', 'Cable', 'Dumbbell', 'Machine'].map(eq => (
                     <Pressable
                       key={eq}
                       style={[styles.tab, activeEquipment === eq && styles.tabActive]}
@@ -405,7 +618,7 @@ export default function WorkoutScreen() {
                     </Pressable>
                   ))}
                 </ScrollView>
-              )}
+              </View>
 
               <FlatList
                 data={filteredExercises}
@@ -413,7 +626,7 @@ export default function WorkoutScreen() {
                 style={styles.exerciseList}
                 keyboardShouldPersistTaps="handled"
                 renderItem={({ item }) => (
-                  <Pressable style={styles.pickerItem} onPress={() => selectExercise(item)}>
+                  <Pressable style={styles.pickerItem} onPress={() => addCard(item)}>
                     <Text style={styles.pickerItemText}>{item.name}</Text>
                     <Text style={styles.pickerItemSub}>
                       {item.muscle_group}{item.equipment ? ` · ${item.equipment}` : ''}
@@ -439,7 +652,8 @@ export default function WorkoutScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+  screen: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1 },
   content: { padding: Spacing.lg, paddingTop: Spacing.xl + Spacing.lg },
   screenTitle: {
     fontSize: FontSize.xl, fontWeight: '700',
@@ -450,44 +664,114 @@ const styles = StyleSheet.create({
     borderRadius: Radius.md, padding: Spacing.md,
     color: Colors.text, fontSize: FontSize.md, marginBottom: Spacing.md,
   },
+
+  // ── State 1 ──
+  startBlankButton: {
+    backgroundColor: Colors.primary,
+    padding: Spacing.lg,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
+  },
+  startBlankText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700' },
+  sectionHeader: {
+    fontSize: FontSize.xs, color: Colors.textSecondary, fontWeight: '600',
+    textTransform: 'uppercase', letterSpacing: 1, marginBottom: Spacing.sm,
+  },
+  templateCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  templateName: { fontSize: FontSize.md, fontWeight: '700', color: Colors.text, marginBottom: 4 },
+  templateExercises: { fontSize: FontSize.sm, color: Colors.textSecondary },
+  proCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    padding: Spacing.md,
+    marginTop: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    opacity: 0.6,
+  },
+  proLabel: {
+    fontSize: FontSize.xs, color: Colors.primary, fontWeight: '700',
+    letterSpacing: 1, marginBottom: 4,
+  },
+  proTitle: { fontSize: FontSize.md, fontWeight: '700', color: Colors.text },
+  proSub: { fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 4 },
+
+  // ── State 2 ──
+  activeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  stopwatch: {
+    fontSize: 32,
+    fontWeight: '700',
+    color: Colors.text,
+  },
+  finishButton: {
+    backgroundColor: Colors.danger,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.md,
+  },
+  finishButtonDisabled: { opacity: 0.6 },
+  finishButtonText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700' },
+
+  // ── Exercise cards ──
   card: {
     backgroundColor: Colors.surface, borderRadius: Radius.lg,
     padding: Spacing.md, marginBottom: Spacing.md,
     borderWidth: 1, borderColor: Colors.border,
   },
-  cardLabel: {
+  cardHeader: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'flex-start', marginBottom: Spacing.sm,
+  },
+  cardHeaderLeft: { flex: 1 },
+  cardExerciseName: { fontSize: FontSize.md, fontWeight: '700', color: Colors.text },
+  cardMuscleGroup: {
     fontSize: FontSize.xs, color: Colors.primary, fontWeight: '600',
-    textTransform: 'uppercase', letterSpacing: 1, marginBottom: Spacing.sm,
+    textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 2,
   },
-  exercisePickerRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    backgroundColor: Colors.surfaceAlt, borderRadius: Radius.md,
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
-    marginBottom: Spacing.sm,
+  cardDeleteHit: { paddingLeft: Spacing.md, paddingBottom: Spacing.sm },
+  cardDeleteText: { color: Colors.danger, fontSize: FontSize.md },
+  setColHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingBottom: Spacing.xs, marginBottom: Spacing.xs,
+    borderBottomWidth: 1, borderBottomColor: Colors.border,
   },
-  exercisePickerText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '500' },
-  exercisePickerPlaceholder: { color: Colors.textSecondary },
-  chevron: { color: Colors.textSecondary, fontSize: FontSize.xl, lineHeight: FontSize.xl },
-  setInputRow: {
-    flexDirection: 'row', gap: Spacing.sm,
-    alignItems: 'center', marginBottom: Spacing.xs,
+  setColLabel: { color: Colors.textDisabled, fontSize: FontSize.xs, fontWeight: '500' },
+  setRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.xs },
+  colNum: { width: 24 },
+  colInput: { flex: 1, marginHorizontal: Spacing.xs },
+  colRemove: { width: 28, alignItems: 'flex-end' },
+  setNum: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '600' },
+  setInput: {
+    backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.sm, paddingHorizontal: Spacing.sm, paddingVertical: 6,
+    color: Colors.text, fontSize: FontSize.md, textAlign: 'center',
   },
-  setInput: { flex: 1, marginBottom: 0 },
+  setRemoveText: { color: Colors.danger, fontSize: FontSize.sm },
   addSetButton: {
-    backgroundColor: Colors.primary, paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md, borderRadius: Radius.md,
+    marginTop: Spacing.sm, paddingVertical: Spacing.sm,
+    borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.sm, alignItems: 'center',
   },
-  addSetButtonText: { color: '#fff', fontWeight: '600', fontSize: FontSize.md },
-  setRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingVertical: Spacing.sm, borderTopWidth: 1, borderTopColor: Colors.border,
+  addSetButtonText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '500' },
+  addExerciseButton: {
+    borderWidth: 1, borderColor: Colors.primary,
+    borderRadius: Radius.md, padding: Spacing.md,
+    alignItems: 'center', marginBottom: Spacing.md,
   },
-  setDetail: { color: Colors.textSecondary, fontSize: FontSize.sm },
-  removeSet: { color: Colors.danger, fontSize: FontSize.md, paddingLeft: Spacing.md },
-  groupHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-  },
-  resumeText: { color: Colors.primary, fontSize: FontSize.sm, fontWeight: '600' },
+  addExerciseText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '600' },
   saveButton: {
     backgroundColor: Colors.primary, padding: Spacing.lg,
     borderRadius: Radius.md, alignItems: 'center', marginTop: Spacing.md,
@@ -495,7 +779,99 @@ const styles = StyleSheet.create({
   saveButtonDisabled: { opacity: 0.6 },
   saveButtonText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700' },
 
-  // Modal
+  // ── Plate calculator ──
+  plateCalc: {
+    backgroundColor: Colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  plateCalcHandle: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
+  },
+  plateCalcHandleText: {
+    color: Colors.primary,
+    fontSize: FontSize.sm,
+    fontWeight: '600',
+  },
+  plateCalcBody: {
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.lg,
+  },
+  calcLabel: {
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: Spacing.xs,
+    marginTop: Spacing.sm,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.xs,
+  },
+  chip: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 6,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceAlt,
+  },
+  chipActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  chipText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '500' },
+  chipTextActive: { color: '#fff' },
+  calcInput: {
+    backgroundColor: Colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 6,
+    color: Colors.text,
+    fontSize: FontSize.sm,
+    width: 70,
+    textAlign: 'center',
+  },
+  calcInputActive: {
+    borderColor: Colors.primary,
+  },
+  calcInputFull: {
+    backgroundColor: Colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+    color: Colors.text,
+    fontSize: FontSize.md,
+    marginTop: Spacing.xs,
+  },
+  calcResult: {
+    marginTop: Spacing.sm,
+    padding: Spacing.md,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  calcResultText: {
+    color: Colors.text,
+    fontSize: FontSize.md,
+    fontWeight: '600',
+  },
+  calcResultError: {
+    color: Colors.textSecondary,
+    fontSize: FontSize.sm,
+  },
+
+  // ── Picker modal ──
   modalContainer: { flex: 1, backgroundColor: Colors.background },
   modalHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -504,11 +880,9 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: FontSize.lg, fontWeight: '700', color: Colors.text },
   modalClose: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '600' },
-  tabRow: { height: 56, borderBottomWidth: 1, borderBottomColor: Colors.border },
-  tabRowContent: {
-    paddingHorizontal: Spacing.lg, paddingVertical: 10,
-    gap: Spacing.xs, alignItems: 'center',
-  },
+  filterRowWrap: { height: 36, marginBottom: 8 },
+  tabRow: { height: 36, flexGrow: 0, flexShrink: 0 },
+  tabRowContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 },
   tab: {
     height: 36, paddingHorizontal: 14, paddingVertical: 0,
     borderRadius: 0, backgroundColor: Colors.surface,
@@ -539,7 +913,7 @@ const styles = StyleSheet.create({
   },
   createButtonText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '600' },
 
-  // Create form
+  // ── Create form ──
   createForm: { flex: 1 },
   createFormContent: { padding: Spacing.lg },
   fieldLabel: {
