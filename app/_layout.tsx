@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Linking } from 'react-native';
 import { Stack } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 
@@ -52,12 +53,15 @@ export default function RootLayout() {
   if (loading) return null;
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      {session ? (
-        <Stack.Screen name="(tabs)" />
-      ) : (
-        <Stack.Screen name="auth" />
-      )}
-    </Stack>
+    <>
+      <StatusBar style="light" backgroundColor="transparent" translucent />
+      <Stack screenOptions={{ headerShown: false }}>
+        {session ? (
+          <Stack.Screen name="(tabs)" />
+        ) : (
+          <Stack.Screen name="auth" />
+        )}
+      </Stack>
+    </>
   );
 }
