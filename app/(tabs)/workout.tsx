@@ -9,10 +9,22 @@ import { supabase, getCurrentUser } from '../../lib/supabase';
 import { Colors, Spacing, FontSize, Radius } from '../../constants/theme';
 import { Exercise, MuscleGroup } from '../../lib/types';
 
+interface SetEntry {
+  reps: string;
+  weight: string;
+  isWarmup: boolean;
+}
+
+interface HistoricSet {
+  reps: number | null;
+  weight: number | null;
+}
+
 interface ExerciseCard {
   id: string;
   exercise: Exercise;
-  sets: { reps: string; weight: string }[];
+  sets: SetEntry[];
+  historicSets: HistoricSet[];
 }
 
 const MUSCLE_GROUPS: { key: 'all' | MuscleGroup; label: string }[] = [
@@ -57,6 +69,14 @@ const formatElapsed = (secs: number) => {
   return `${m}:${s}`;
 };
 
+const formatHistoric = (h: HistoricSet | undefined) => {
+  if (!h) return '—';
+  if (h.reps == null && h.weight == null) return '—';
+  const r = h.reps != null ? `${h.reps}` : '?';
+  const w = h.weight != null ? `${h.weight}` : '?';
+  return `${r}×${w}`;
+};
+
 export default function WorkoutScreen() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
 
@@ -79,6 +99,12 @@ export default function WorkoutScreen() {
   const [newEquipment, setNewEquipment] = useState('');
   const [newIsCompound, setNewIsCompound] = useState(false);
   const [creating, setCreating] = useState(false);
+
+  // Warmup modal
+  const [warmupCardId, setWarmupCardId] = useState<string | null>(null);
+  const [warmupNumSets, setWarmupNumSets] = useState('2');
+  const [warmupWeight, setWarmupWeight] = useState('');
+  const [warmupReps, setWarmupReps] = useState('');
 
   // Plate calculator
   const [calcOpen, setCalcOpen] = useState(false);
@@ -129,6 +155,45 @@ export default function WorkoutScreen() {
     return result;
   }, [targetWeight, barWeight, disabledPlates]);
 
+  // ── Historic sets ──
+
+  const loadHistoricSets = async (exerciseId: string, cardId: string) => {
+    const { data } = await supabase
+      .from('workout_sets')
+      .select('set_number, reps, weight_lbs, workout_id, workouts(date, created_at)')
+      .eq('exercise_id', exerciseId)
+      .limit(60);
+
+    if (!data || data.length === 0) return;
+
+    type Row = {
+      set_number: number;
+      reps: number | null;
+      weight_lbs: number | null;
+      workout_id: string;
+      workouts: { date: string; created_at: string } | null;
+    };
+    const rows = data as unknown as Row[];
+
+    // Find the most recent workout containing this exercise
+    const sorted = [...rows].sort((a, b) => {
+      const da = a.workouts?.date ?? '';
+      const db = b.workouts?.date ?? '';
+      if (db !== da) return db.localeCompare(da);
+      return (b.workouts?.created_at ?? '').localeCompare(a.workouts?.created_at ?? '');
+    });
+
+    const mostRecentId = sorted[0].workout_id;
+    const historicSets: HistoricSet[] = rows
+      .filter(r => r.workout_id === mostRecentId)
+      .sort((a, b) => a.set_number - b.set_number)
+      .map(r => ({ reps: r.reps, weight: r.weight_lbs }));
+
+    setCards(prev => prev.map(c =>
+      c.id === cardId ? { ...c, historicSets } : c
+    ));
+  };
+
   // ── Workout start ──
 
   const startBlankWorkout = () => {
@@ -146,7 +211,8 @@ export default function WorkoutScreen() {
         templateCards.push({
           id: `${ex.id}-${Date.now()}-${Math.random()}`,
           exercise: ex,
-          sets: [{ reps: '', weight: '' }],
+          sets: [{ reps: '', weight: '', isWarmup: false }],
+          historicSets: [],
         });
       }
     }
@@ -154,18 +220,44 @@ export default function WorkoutScreen() {
     setCards(templateCards);
     setElapsed(0);
     setWorkoutActive(true);
+    for (const card of templateCards) {
+      loadHistoricSets(card.exercise.id, card.id);
+    }
+  };
+
+  const cancelWorkout = () => {
+    Alert.alert(
+      'Cancel Workout?',
+      'Your sets will not be saved.',
+      [
+        { text: 'Keep Going', style: 'cancel' },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: () => {
+            setWorkoutActive(false);
+            setElapsed(0);
+            setCards([]);
+            setWorkoutName('');
+          },
+        },
+      ]
+    );
   };
 
   // ── Card operations ──
 
   const addCard = (exercise: Exercise) => {
+    const cardId = `${exercise.id}-${Date.now()}`;
     setCards(prev => [...prev, {
-      id: `${exercise.id}-${Date.now()}`,
+      id: cardId,
       exercise,
-      sets: [{ reps: '', weight: '' }],
+      sets: [{ reps: '', weight: '', isWarmup: false }],
+      historicSets: [],
     }]);
     setShowPicker(false);
     setShowCreateForm(false);
+    loadHistoricSets(exercise.id, cardId);
   };
 
   const removeCard = (cardId: string) => {
@@ -174,7 +266,9 @@ export default function WorkoutScreen() {
 
   const addSet = (cardId: string) => {
     setCards(prev => prev.map(c =>
-      c.id === cardId ? { ...c, sets: [...c.sets, { reps: '', weight: '' }] } : c
+      c.id === cardId
+        ? { ...c, sets: [...c.sets, { reps: '', weight: '', isWarmup: false }] }
+        : c
     ));
   };
 
@@ -192,6 +286,27 @@ export default function WorkoutScreen() {
       sets[index] = { ...sets[index], [field]: value };
       return { ...c, sets };
     }));
+  };
+
+  // ── Warmup sets ──
+
+  const addWarmupSets = () => {
+    const numSets = Math.max(1, parseInt(warmupNumSets) || 1);
+    const newWarmups: SetEntry[] = Array.from({ length: numSets }, () => ({
+      reps: warmupReps,
+      weight: warmupWeight,
+      isWarmup: true,
+    }));
+    setCards(prev => prev.map(c => {
+      if (c.id !== warmupCardId) return c;
+      const existingWarmups = c.sets.filter(s => s.isWarmup);
+      const workingSets = c.sets.filter(s => !s.isWarmup);
+      return { ...c, sets: [...existingWarmups, ...newWarmups, ...workingSets] };
+    }));
+    setWarmupCardId(null);
+    setWarmupNumSets('2');
+    setWarmupWeight('');
+    setWarmupReps('');
   };
 
   // ── Picker helpers ──
@@ -227,17 +342,24 @@ export default function WorkoutScreen() {
     setCreating(false);
   };
 
-  // ── Finish workout ──
+  // ── Finish workout — warmup sets are ephemeral and not saved to DB ──
 
   const finishWorkout = async () => {
     if (!workoutName.trim()) { Alert.alert('Name your workout'); return; }
 
-    const populated = cards.flatMap(c =>
-      c.sets
-        .map((s, i) => ({ card: c, setIndex: i, ...s }))
-        .filter(s => s.reps.trim() || s.weight.trim())
-    );
-    if (populated.length === 0) { Alert.alert('Log at least one set'); return; }
+    type SaveEntry = { card: ExerciseCard; setNum: number; reps: string; weight: string };
+    const toSave: SaveEntry[] = [];
+    for (const card of cards) {
+      let workingNum = 0;
+      for (const set of card.sets) {
+        if (set.isWarmup) continue;
+        workingNum++;
+        if (set.reps.trim() || set.weight.trim()) {
+          toSave.push({ card, setNum: workingNum, reps: set.reps, weight: set.weight });
+        }
+      }
+    }
+    if (toSave.length === 0) { Alert.alert('Log at least one working set'); return; }
 
     setSaving(true);
     const user = await getCurrentUser();
@@ -257,10 +379,10 @@ export default function WorkoutScreen() {
     }
 
     const { error: setsError } = await supabase.from('workout_sets').insert(
-      populated.map(s => ({
+      toSave.map(s => ({
         workout_id: workout.id,
         exercise_id: s.card.exercise.id,
-        set_number: s.setIndex + 1,
+        set_number: s.setNum,
         reps: parseInt(s.reps) || null,
         weight_lbs: parseFloat(s.weight) || null,
       }))
@@ -332,15 +454,20 @@ export default function WorkoutScreen() {
             <>
               <View style={styles.activeHeader}>
                 <Text style={styles.stopwatch}>{formatElapsed(elapsed)}</Text>
-                <Pressable
-                  style={[styles.finishButton, saving && styles.finishButtonDisabled]}
-                  onPress={finishWorkout}
-                  disabled={saving}
-                >
-                  <Text style={styles.finishButtonText}>
-                    {saving ? 'Saving...' : 'Finish Workout'}
-                  </Text>
-                </Pressable>
+                <View style={styles.activeHeaderButtons}>
+                  <Pressable style={styles.cancelButton} onPress={cancelWorkout}>
+                    <Text style={styles.cancelButtonText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.finishButton, saving && styles.finishButtonDisabled]}
+                    onPress={finishWorkout}
+                    disabled={saving}
+                  >
+                    <Text style={styles.finishButtonText}>
+                      {saving ? 'Saving...' : 'Finish'}
+                    </Text>
+                  </Pressable>
+                </View>
               </View>
 
               <TextInput
@@ -351,55 +478,86 @@ export default function WorkoutScreen() {
                 onChangeText={setWorkoutName}
               />
 
-              {cards.map(card => (
-                <View key={card.id} style={styles.card}>
-                  <View style={styles.cardHeader}>
-                    <View style={styles.cardHeaderLeft}>
-                      <Text style={styles.cardExerciseName}>{card.exercise.name}</Text>
-                      <Text style={styles.cardMuscleGroup}>{card.exercise.muscle_group}</Text>
-                    </View>
-                    <Pressable onPress={() => removeCard(card.id)} style={styles.cardDeleteHit}>
-                      <Text style={styles.cardDeleteText}>✕</Text>
-                    </Pressable>
-                  </View>
-
-                  <View style={styles.setColHeader}>
-                    <Text style={[styles.setColLabel, styles.colNum]}>#</Text>
-                    <Text style={[styles.setColLabel, styles.colInput]}>Reps</Text>
-                    <Text style={[styles.setColLabel, styles.colInput]}>Weight (lbs)</Text>
-                    <View style={styles.colRemove} />
-                  </View>
-
-                  {card.sets.map((set, idx) => (
-                    <View key={idx} style={styles.setRow}>
-                      <Text style={[styles.setNum, styles.colNum]}>{idx + 1}</Text>
-                      <TextInput
-                        style={[styles.setInput, styles.colInput]}
-                        placeholder="—"
-                        placeholderTextColor={Colors.textDisabled}
-                        value={set.reps}
-                        onChangeText={v => updateSet(card.id, idx, 'reps', v)}
-                        keyboardType="numeric"
-                      />
-                      <TextInput
-                        style={[styles.setInput, styles.colInput]}
-                        placeholder="—"
-                        placeholderTextColor={Colors.textDisabled}
-                        value={set.weight}
-                        onChangeText={v => updateSet(card.id, idx, 'weight', v)}
-                        keyboardType="decimal-pad"
-                      />
-                      <Pressable style={styles.colRemove} onPress={() => removeSet(card.id, idx)}>
-                        <Text style={styles.setRemoveText}>✕</Text>
+              {cards.map(card => {
+                let warmupCount = 0;
+                let workingCount = 0;
+                return (
+                  <View key={card.id} style={styles.card}>
+                    <View style={styles.cardHeader}>
+                      <View style={styles.cardHeaderLeft}>
+                        <Text style={styles.cardExerciseName}>{card.exercise.name}</Text>
+                        <Text style={styles.cardMuscleGroup}>{card.exercise.muscle_group}</Text>
+                      </View>
+                      <Pressable
+                        style={styles.warmupBtn}
+                        onPress={() => setWarmupCardId(card.id)}
+                      >
+                        <Text style={styles.warmupBtnText}>W</Text>
+                      </Pressable>
+                      <Pressable onPress={() => removeCard(card.id)} style={styles.cardDeleteHit}>
+                        <Text style={styles.cardDeleteText}>✕</Text>
                       </Pressable>
                     </View>
-                  ))}
 
-                  <Pressable style={styles.addSetButton} onPress={() => addSet(card.id)}>
-                    <Text style={styles.addSetButtonText}>+ Add Set</Text>
-                  </Pressable>
-                </View>
-              ))}
+                    <View style={styles.setColHeader}>
+                      <Text style={[styles.setColLabel, styles.colNum]}>#</Text>
+                      <Text style={[styles.setColLabel, styles.colLast]}>Last</Text>
+                      <Text style={[styles.setColLabel, styles.colInput]}>Reps</Text>
+                      <Text style={[styles.setColLabel, styles.colInput]}>Wt (lbs)</Text>
+                      <View style={styles.colRemove} />
+                    </View>
+
+                    {card.sets.map((set, idx) => {
+                      let label: string;
+                      let historicIdx: number;
+                      if (set.isWarmup) {
+                        warmupCount++;
+                        label = `W${warmupCount}`;
+                        historicIdx = -1;
+                      } else {
+                        historicIdx = workingCount;
+                        workingCount++;
+                        label = `${workingCount}`;
+                      }
+                      const historic = historicIdx >= 0 ? card.historicSets[historicIdx] : undefined;
+
+                      return (
+                        <View key={idx} style={styles.setRow}>
+                          <Text style={[styles.setNum, styles.colNum, set.isWarmup && styles.setNumWarmup]}>
+                            {label}
+                          </Text>
+                          <Text style={[styles.historicText, styles.colLast]}>
+                            {set.isWarmup ? '—' : formatHistoric(historic)}
+                          </Text>
+                          <TextInput
+                            style={[styles.setInput, styles.colInput]}
+                            placeholder="—"
+                            placeholderTextColor={Colors.textDisabled}
+                            value={set.reps}
+                            onChangeText={v => updateSet(card.id, idx, 'reps', v)}
+                            keyboardType="numeric"
+                          />
+                          <TextInput
+                            style={[styles.setInput, styles.colInput]}
+                            placeholder="—"
+                            placeholderTextColor={Colors.textDisabled}
+                            value={set.weight}
+                            onChangeText={v => updateSet(card.id, idx, 'weight', v)}
+                            keyboardType="decimal-pad"
+                          />
+                          <Pressable style={styles.colRemove} onPress={() => removeSet(card.id, idx)}>
+                            <Text style={styles.setRemoveText}>✕</Text>
+                          </Pressable>
+                        </View>
+                      );
+                    })}
+
+                    <Pressable style={styles.addSetButton} onPress={() => addSet(card.id)}>
+                      <Text style={styles.addSetButtonText}>+ Add Set</Text>
+                    </Pressable>
+                  </View>
+                );
+              })}
 
               <Pressable style={styles.addExerciseButton} onPress={openPicker}>
                 <Text style={styles.addExerciseText}>+ Add Exercise</Text>
@@ -491,6 +649,59 @@ export default function WorkoutScreen() {
           )}
         </View>
       </View>
+
+      {/* ── Warmup Modal ── */}
+      <Modal
+        visible={warmupCardId !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setWarmupCardId(null)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add Warmup Sets</Text>
+            <Pressable onPress={() => setWarmupCardId(null)}>
+              <Text style={styles.modalClose}>Cancel</Text>
+            </Pressable>
+          </View>
+          <ScrollView
+            style={styles.createForm}
+            contentContainerStyle={styles.createFormContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Text style={styles.fieldLabel}>Number of Sets</Text>
+            <TextInput
+              style={styles.input}
+              value={warmupNumSets}
+              onChangeText={setWarmupNumSets}
+              keyboardType="numeric"
+              placeholder="2"
+              placeholderTextColor={Colors.textDisabled}
+            />
+            <Text style={styles.fieldLabel}>Reps per Set</Text>
+            <TextInput
+              style={styles.input}
+              value={warmupReps}
+              onChangeText={setWarmupReps}
+              keyboardType="numeric"
+              placeholder="—"
+              placeholderTextColor={Colors.textDisabled}
+            />
+            <Text style={styles.fieldLabel}>Weight (lbs)</Text>
+            <TextInput
+              style={styles.input}
+              value={warmupWeight}
+              onChangeText={setWarmupWeight}
+              keyboardType="decimal-pad"
+              placeholder="—"
+              placeholderTextColor={Colors.textDisabled}
+            />
+            <Pressable style={styles.saveButton} onPress={addWarmupSets}>
+              <Text style={styles.saveButtonText}>Add Warmup Sets</Text>
+            </Pressable>
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* ── Exercise Picker Modal ── */}
       <Modal
@@ -679,23 +890,16 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase', letterSpacing: 1, marginBottom: Spacing.sm,
   },
   templateCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    padding: Spacing.md,
-    marginBottom: Spacing.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    backgroundColor: Colors.surface, borderRadius: Radius.lg,
+    padding: Spacing.md, marginBottom: Spacing.sm,
+    borderWidth: 1, borderColor: Colors.border,
   },
   templateName: { fontSize: FontSize.md, fontWeight: '700', color: Colors.text, marginBottom: 4 },
   templateExercises: { fontSize: FontSize.sm, color: Colors.textSecondary },
   proCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
-    padding: Spacing.md,
-    marginTop: Spacing.sm,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-    opacity: 0.6,
+    backgroundColor: Colors.surface, borderRadius: Radius.lg,
+    padding: Spacing.md, marginTop: Spacing.sm,
+    borderWidth: 1, borderColor: Colors.primary, opacity: 0.6,
   },
   proLabel: {
     fontSize: FontSize.xs, color: Colors.primary, fontWeight: '700',
@@ -704,26 +908,31 @@ const styles = StyleSheet.create({
   proTitle: { fontSize: FontSize.md, fontWeight: '700', color: Colors.text },
   proSub: { fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 4 },
 
-  // ── State 2 ──
+  // ── State 2 header ──
   activeHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: Spacing.md,
   },
-  stopwatch: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: Colors.text,
+  stopwatch: { fontSize: 32, fontWeight: '700', color: Colors.text },
+  activeHeaderButtons: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center' },
+  cancelButton: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
+  cancelButtonText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '600' },
   finishButton: {
     backgroundColor: Colors.danger,
-    paddingHorizontal: Spacing.lg,
+    paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     borderRadius: Radius.md,
   },
   finishButtonDisabled: { opacity: 0.6 },
-  finishButtonText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700' },
+  finishButtonText: { color: '#fff', fontSize: FontSize.sm, fontWeight: '700' },
 
   // ── Exercise cards ──
   card: {
@@ -741,8 +950,18 @@ const styles = StyleSheet.create({
     fontSize: FontSize.xs, color: Colors.primary, fontWeight: '600',
     textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 2,
   },
-  cardDeleteHit: { paddingLeft: Spacing.md, paddingBottom: Spacing.sm },
+  warmupBtn: {
+    width: 28, height: 28,
+    backgroundColor: Colors.warning,
+    borderRadius: Radius.sm,
+    justifyContent: 'center', alignItems: 'center',
+    marginLeft: Spacing.sm, marginTop: 2,
+  },
+  warmupBtnText: { color: '#fff', fontSize: FontSize.xs, fontWeight: '700' },
+  cardDeleteHit: { paddingLeft: Spacing.sm, paddingBottom: Spacing.sm },
   cardDeleteText: { color: Colors.danger, fontSize: FontSize.md },
+
+  // Column layout
   setColHeader: {
     flexDirection: 'row', alignItems: 'center',
     paddingBottom: Spacing.xs, marginBottom: Spacing.xs,
@@ -750,10 +969,13 @@ const styles = StyleSheet.create({
   },
   setColLabel: { color: Colors.textDisabled, fontSize: FontSize.xs, fontWeight: '500' },
   setRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.xs },
-  colNum: { width: 24 },
+  colNum: { width: 30 },
+  colLast: { width: 52, marginRight: Spacing.xs },
   colInput: { flex: 1, marginHorizontal: Spacing.xs },
   colRemove: { width: 28, alignItems: 'flex-end' },
   setNum: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '600' },
+  setNumWarmup: { color: Colors.warning },
+  historicText: { color: Colors.textDisabled, fontSize: FontSize.xs },
   setInput: {
     backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border,
     borderRadius: Radius.sm, paddingHorizontal: Spacing.sm, paddingVertical: 6,
@@ -782,94 +1004,45 @@ const styles = StyleSheet.create({
   // ── Plate calculator ──
   plateCalc: {
     backgroundColor: Colors.surface,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
+    borderTopWidth: 1, borderTopColor: Colors.border,
   },
   plateCalcHandle: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    alignItems: 'center',
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, alignItems: 'center',
   },
-  plateCalcHandleText: {
-    color: Colors.primary,
-    fontSize: FontSize.sm,
-    fontWeight: '600',
-  },
-  plateCalcBody: {
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.lg,
-  },
+  plateCalcHandleText: { color: Colors.primary, fontSize: FontSize.sm, fontWeight: '600' },
+  plateCalcBody: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.lg },
   calcLabel: {
-    fontSize: FontSize.xs,
-    color: Colors.textSecondary,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: Spacing.xs,
-    marginTop: Spacing.sm,
+    fontSize: FontSize.xs, color: Colors.textSecondary, fontWeight: '600',
+    textTransform: 'uppercase', letterSpacing: 0.8,
+    marginBottom: Spacing.xs, marginTop: Spacing.sm,
   },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.xs,
-  },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs },
   chip: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md, paddingVertical: 6,
+    borderRadius: Radius.sm, borderWidth: 1, borderColor: Colors.border,
     backgroundColor: Colors.surfaceAlt,
   },
-  chipActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
+  chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   chipText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '500' },
   chipTextActive: { color: '#fff' },
   calcInput: {
-    backgroundColor: Colors.surfaceAlt,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: Radius.sm,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 6,
-    color: Colors.text,
-    fontSize: FontSize.sm,
-    width: 70,
-    textAlign: 'center',
+    backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.sm, paddingHorizontal: Spacing.sm, paddingVertical: 6,
+    color: Colors.text, fontSize: FontSize.sm, width: 70, textAlign: 'center',
   },
-  calcInputActive: {
-    borderColor: Colors.primary,
-  },
+  calcInputActive: { borderColor: Colors.primary },
   calcInputFull: {
-    backgroundColor: Colors.surfaceAlt,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    borderRadius: Radius.sm,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 8,
-    color: Colors.text,
-    fontSize: FontSize.md,
-    marginTop: Spacing.xs,
+    backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.sm, paddingHorizontal: Spacing.md, paddingVertical: 8,
+    color: Colors.text, fontSize: FontSize.md, marginTop: Spacing.xs,
   },
   calcResult: {
-    marginTop: Spacing.sm,
-    padding: Spacing.md,
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    marginTop: Spacing.sm, padding: Spacing.md,
+    backgroundColor: Colors.surfaceAlt, borderRadius: Radius.sm,
+    borderWidth: 1, borderColor: Colors.border,
   },
-  calcResultText: {
-    color: Colors.text,
-    fontSize: FontSize.md,
-    fontWeight: '600',
-  },
-  calcResultError: {
-    color: Colors.textSecondary,
-    fontSize: FontSize.sm,
-  },
+  calcResultText: { color: Colors.text, fontSize: FontSize.md, fontWeight: '600' },
+  calcResultError: { color: Colors.textSecondary, fontSize: FontSize.sm },
 
   // ── Picker modal ──
   modalContainer: { flex: 1, backgroundColor: Colors.background },
