@@ -155,12 +155,24 @@ export default function TodayScreen() {
         <>
           <Pressable style={styles.menuBackdrop} onPress={() => setShowMenu(false)} />
           <View style={styles.menuCard}>
-            <Pressable
-              style={styles.menuItem}
-              onPress={async () => { setShowMenu(false); await supabase.auth.signOut(); }}
-            >
-              <Text style={[styles.menuItemText, styles.menuItemDanger]}>Sign Out</Text>
-            </Pressable>
+            {(
+              [
+                { label: 'Account',  onPress: () => { setShowMenu(false); router.push('/account'); } },
+                { label: 'Settings', onPress: () => { setShowMenu(false); router.push('/settings'); } },
+                { label: 'Goals',    onPress: () => { setShowMenu(false); router.push('/goals'); } },
+                { label: 'Sign Out', danger: true, onPress: async () => { setShowMenu(false); await supabase.auth.signOut(); } },
+              ] as { label: string; onPress: () => void; danger?: boolean }[]
+            ).map((item, i, arr) => (
+              <Pressable
+                key={item.label}
+                style={[styles.menuItem, i < arr.length - 1 && styles.menuItemBorder]}
+                onPress={item.onPress}
+              >
+                <Text style={[styles.menuItemText, item.danger && styles.menuItemDanger]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            ))}
           </View>
         </>
       )}
@@ -271,7 +283,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 90,
     right: Spacing.lg,
-    width: 160,
+    width: 180,
     backgroundColor: Colors.surface,
     borderRadius: Radius.md,
     borderWidth: 1,
@@ -287,6 +299,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
   },
+  menuItemBorder: { borderBottomWidth: 1, borderBottomColor: Colors.border },
   menuItemText: { fontSize: FontSize.md, color: Colors.text },
   menuItemDanger: { color: Colors.danger },
 });
