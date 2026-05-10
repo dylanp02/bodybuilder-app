@@ -3,8 +3,10 @@ import { useEffect, useState } from 'react';
 import { Linking } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
+import { ThemeProvider, useTheme } from '../lib/ThemeContext';
 
 function handleAuthUrl(url: string) {
   // PKCE flow (Supabase v2 default): bodybuilderapp://?code=xxx
@@ -24,24 +26,40 @@ function handleAuthUrl(url: string) {
   }
 }
 
-export default function RootLayout() {
+function RootLayoutInner() {
+  const { colors, isDark } = useTheme();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      // Enforce "keep me signed in" preference set at login.
+      // If the user unchecked it, sign them out on every cold launch.
+      if (session) {
+        const pref = await AsyncStorage.getItem('keep_logged_in');
+        if (pref === 'false') {
+          await AsyncStorage.removeItem('keep_logged_in');
+          await supabase.auth.signOut();
+          setLoading(false);
+          return;
+        }
+      }
       setSession(session);
-      setLoading(false);
+      if (!session) setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => setSession(session)
+      (_event, session) => {
+        setSession(session);
+        if (!session) {
+          setOnboardingComplete(null);
+          setLoading(false);
+        }
+      }
     );
 
-    // Cold start: app was opened by tapping the confirmation link
     Linking.getInitialURL().then(url => { if (url) handleAuthUrl(url); });
-
-    // Warm open: confirmation link tapped while app is already running
     const linkSub = Linking.addEventListener('url', ({ url }) => handleAuthUrl(url));
 
     return () => {
@@ -50,18 +68,51 @@ export default function RootLayout() {
     };
   }, []);
 
+  // Check onboarding status whenever the authenticated user changes
+  useEffect(() => {
+    if (!session) return;
+    setLoading(true);
+    supabase
+      .from('profiles')
+      .select('onboarding_complete')
+      .eq('id', session.user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        setOnboardingComplete(data?.onboarding_complete ?? false);
+        setLoading(false);
+      });
+  }, [session?.user?.id]);
+
   if (loading) return null;
+
+  // Determine which root screen to show
+  let screenName: string;
+  if (!session) {
+    screenName = 'auth';
+  } else if (onboardingComplete) {
+    screenName = '(tabs)';
+  } else {
+    screenName = 'onboarding';
+  }
 
   return (
     <>
-      <StatusBar style="light" backgroundColor="transparent" translucent />
+      <StatusBar
+        style={isDark ? 'light' : 'dark'}
+        backgroundColor={colors.background}
+        translucent={false}
+      />
       <Stack screenOptions={{ headerShown: false }}>
-        {session ? (
-          <Stack.Screen name="(tabs)" />
-        ) : (
-          <Stack.Screen name="auth" />
-        )}
+        <Stack.Screen name={screenName} />
       </Stack>
     </>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <ThemeProvider>
+      <RootLayoutInner />
+    </ThemeProvider>
   );
 }

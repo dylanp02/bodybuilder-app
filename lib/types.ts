@@ -55,6 +55,39 @@ export interface WorkoutSet {
   notes: string | null;
 }
 
+// ─── Planner types ───────────────────────────────────────────────────────────
+
+export type CardCategory = 'muscle' | 'cardio' | 'rest';
+
+export interface DayCard {
+  id: string;
+  name: string;
+  subtitle: string;
+  category: CardCategory;
+}
+
+export interface CycleDay {
+  id: string;
+  label: string;
+  cards: DayCard[];
+}
+
+export type WeekDayKey = 'Mon' | 'Tue' | 'Wed' | 'Thu' | 'Fri' | 'Sat' | 'Sun';
+export type WeeklySchedule = Record<WeekDayKey, DayCard[]>;
+export interface CycleSchedule { days: CycleDay[]; }
+
+export interface TrainingPlan {
+  id: string;
+  user_id: string;
+  plan_type: 'weekly' | 'cycle';
+  plan_name: string;
+  duration_weeks: number;
+  start_date: string;
+  schedule: WeeklySchedule | CycleSchedule;
+  is_active: boolean;
+  created_at?: string;
+}
+
 export interface DailyLog {
   id: string;
   user_id: string;

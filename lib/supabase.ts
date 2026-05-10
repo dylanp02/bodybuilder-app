@@ -20,8 +20,3 @@ export const getCurrentUser = async () => {
   return user;
 };
 
-// Helper: get the current session (includes access token for API calls)
-export const getSession = async () => {
-  const { data: { session } } = await supabase.auth.getSession();
-  return session;
-};

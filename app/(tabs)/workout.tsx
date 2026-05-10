@@ -1,4 +1,4 @@
-// app/(tabs)/workout.tsx
+// app/(tabs)/workout.tsx — active workout logger with plate calculator and exercise picker
 import { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
@@ -6,8 +6,10 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase, getCurrentUser } from '../../lib/supabase';
-import { Colors, Spacing, FontSize, Radius } from '../../constants/theme';
+import { useColors } from '../../lib/ThemeContext';
+import { type AppColors, Spacing, FontSize, Radius } from '../../constants/theme';
 import { Exercise, MuscleGroup } from '../../lib/types';
+import { MUSCLE_GROUPS, EQUIPMENT_FILTERS } from '../../lib/constants';
 
 interface SetEntry {
   reps: string;
@@ -26,19 +28,6 @@ interface ExerciseCard {
   sets: SetEntry[];
   historicSets: HistoricSet[];
 }
-
-const MUSCLE_GROUPS: { key: 'all' | MuscleGroup; label: string }[] = [
-  { key: 'all',       label: 'All' },
-  { key: 'chest',     label: 'Chest' },
-  { key: 'back',      label: 'Back' },
-  { key: 'shoulders', label: 'Shoulders' },
-  { key: 'biceps',    label: 'Biceps' },
-  { key: 'triceps',   label: 'Triceps' },
-  { key: 'legs',      label: 'Legs' },
-  { key: 'glutes',    label: 'Glutes' },
-  { key: 'core',      label: 'Core' },
-  { key: 'cardio',    label: 'Cardio' },
-];
 
 const ALL_PLATE_SIZES = [45, 35, 25, 10, 5, 2.5, 1];
 
@@ -78,21 +67,21 @@ const formatHistoric = (h: HistoricSet | undefined) => {
 };
 
 export default function WorkoutScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+
   const [exercises, setExercises] = useState<Exercise[]>([]);
 
-  // Workout state
   const [workoutActive, setWorkoutActive] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [workoutName, setWorkoutName] = useState('');
   const [cards, setCards] = useState<ExerciseCard[]>([]);
   const [saving, setSaving] = useState(false);
 
-  // Picker modal
   const [showPicker, setShowPicker] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | MuscleGroup>('all');
   const [activeEquipment, setActiveEquipment] = useState('all');
 
-  // Create exercise form (inside picker)
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newName, setNewName] = useState('');
   const [newMuscleGroup, setNewMuscleGroup] = useState<MuscleGroup>('chest');
@@ -100,13 +89,11 @@ export default function WorkoutScreen() {
   const [newIsCompound, setNewIsCompound] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  // Warmup modal
   const [warmupCardId, setWarmupCardId] = useState<string | null>(null);
   const [warmupNumSets, setWarmupNumSets] = useState('2');
   const [warmupWeight, setWarmupWeight] = useState('');
   const [warmupReps, setWarmupReps] = useState('');
 
-  // Plate calculator
   const [calcOpen, setCalcOpen] = useState(false);
   const [barWeight, setBarWeight] = useState(45);
   const [customBarText, setCustomBarText] = useState('');
@@ -115,7 +102,6 @@ export default function WorkoutScreen() {
 
   useEffect(() => { loadExercises(); }, []);
 
-  // Stopwatch
   useEffect(() => {
     if (!workoutActive) return;
     const timer = setInterval(() => setElapsed(s => s + 1), 1000);
@@ -123,8 +109,11 @@ export default function WorkoutScreen() {
   }, [workoutActive]);
 
   const loadExercises = async () => {
-    const { data } = await supabase.from('exercises').select('*').order('name');
-    if (data) setExercises(data);
+    const { data } = await supabase
+      .from('exercises')
+      .select('id, name, muscle_group, equipment, is_compound, notes')
+      .order('name');
+    if (data) setExercises(data as Exercise[]);
   };
 
   const filteredExercises = useMemo(() => {
@@ -136,7 +125,6 @@ export default function WorkoutScreen() {
       : byGroup.filter(e => (e.equipment ?? '').toLowerCase() === activeEquipment.toLowerCase());
   }, [exercises, activeTab, activeEquipment]);
 
-  // Plate calculator greedy result
   const plateResult = useMemo(() => {
     const target = parseFloat(targetWeight);
     if (!target || target <= barWeight) return null;
@@ -154,8 +142,6 @@ export default function WorkoutScreen() {
     if (remaining > 0.5) return null;
     return result;
   }, [targetWeight, barWeight, disabledPlates]);
-
-  // ── Historic sets ──
 
   const loadHistoricSets = async (exerciseId: string, cardId: string) => {
     const { data } = await supabase
@@ -175,7 +161,6 @@ export default function WorkoutScreen() {
     };
     const rows = data as unknown as Row[];
 
-    // Find the most recent workout containing this exercise
     const sorted = [...rows].sort((a, b) => {
       const da = a.workouts?.date ?? '';
       const db = b.workouts?.date ?? '';
@@ -193,8 +178,6 @@ export default function WorkoutScreen() {
       c.id === cardId ? { ...c, historicSets } : c
     ));
   };
-
-  // ── Workout start ──
 
   const startBlankWorkout = () => {
     setWorkoutName('');
@@ -245,13 +228,10 @@ export default function WorkoutScreen() {
     );
   };
 
-  // ── Card operations ──
-
   const addCard = (exercise: Exercise) => {
     const cardId = `${exercise.id}-${Date.now()}`;
     setCards(prev => [...prev, {
-      id: cardId,
-      exercise,
+      id: cardId, exercise,
       sets: [{ reps: '', weight: '', isWarmup: false }],
       historicSets: [],
     }]);
@@ -288,14 +268,10 @@ export default function WorkoutScreen() {
     }));
   };
 
-  // ── Warmup sets ──
-
   const addWarmupSets = () => {
     const numSets = Math.max(1, parseInt(warmupNumSets) || 1);
     const newWarmups: SetEntry[] = Array.from({ length: numSets }, () => ({
-      reps: warmupReps,
-      weight: warmupWeight,
-      isWarmup: true,
+      reps: warmupReps, weight: warmupWeight, isWarmup: true,
     }));
     setCards(prev => prev.map(c => {
       if (c.id !== warmupCardId) return c;
@@ -308,8 +284,6 @@ export default function WorkoutScreen() {
     setWarmupWeight('');
     setWarmupReps('');
   };
-
-  // ── Picker helpers ──
 
   const openPicker = () => {
     setShowCreateForm(false);
@@ -341,8 +315,6 @@ export default function WorkoutScreen() {
     }
     setCreating(false);
   };
-
-  // ── Finish workout — warmup sets are ephemeral and not saved to DB ──
 
   const finishWorkout = async () => {
     if (!workoutName.trim()) { Alert.alert('Name your workout'); return; }
@@ -401,15 +373,11 @@ export default function WorkoutScreen() {
     }
   };
 
-  // ── Plate calculator ──
-
   const togglePlate = (plate: number) => {
     setDisabledPlates(prev =>
       prev.includes(plate) ? prev.filter(p => p !== plate) : [...prev, plate]
     );
   };
-
-  // ── Render ──
 
   return (
     <>
@@ -420,7 +388,6 @@ export default function WorkoutScreen() {
           keyboardShouldPersistTaps="handled"
         >
           {!workoutActive ? (
-            // ── STATE 1: No active workout ──
             <>
               <Text style={styles.screenTitle}>Workout</Text>
 
@@ -443,14 +410,13 @@ export default function WorkoutScreen() {
                 </Pressable>
               ))}
 
-              <View style={styles.proCard}>
-                <Text style={styles.proLabel}>PRO</Text>
+              <Pressable style={styles.proCard} onPress={() => router.push('/workout-template')}>
+                <Text style={styles.proLabel}>PRO  ·  DEV UNLOCKED</Text>
                 <Text style={styles.proTitle}>Create Custom Template</Text>
-                <Text style={styles.proSub}>Save your own workout templates — coming soon</Text>
-              </View>
+                <Text style={styles.proSub}>Build and save your own reusable workout structure</Text>
+              </Pressable>
             </>
           ) : (
-            // ── STATE 2: Workout active ──
             <>
               <View style={styles.activeHeader}>
                 <Text style={styles.stopwatch}>{formatElapsed(elapsed)}</Text>
@@ -566,7 +532,7 @@ export default function WorkoutScreen() {
           )}
         </ScrollView>
 
-        {/* ── Plate Calculator — always visible ── */}
+        {/* Plate Calculator */}
         <View style={styles.plateCalc}>
           <Pressable style={styles.plateCalcHandle} onPress={() => setCalcOpen(v => !v)}>
             <Text style={styles.plateCalcHandleText}>
@@ -650,7 +616,7 @@ export default function WorkoutScreen() {
         </View>
       </View>
 
-      {/* ── Warmup Modal ── */}
+      {/* Warmup Modal */}
       <Modal
         visible={warmupCardId !== null}
         animationType="slide"
@@ -703,7 +669,7 @@ export default function WorkoutScreen() {
         </View>
       </Modal>
 
-      {/* ── Exercise Picker Modal ── */}
+      {/* Exercise Picker Modal */}
       <Modal
         visible={showPicker}
         animationType="slide"
@@ -756,7 +722,7 @@ export default function WorkoutScreen() {
               </ScrollView>
 
               <TextInput
-                style={[styles.input, { marginTop: Spacing.md }]}
+                style={[styles.input, styles.inputSpacedTop]}
                 placeholder="Equipment (e.g. Barbell, Dumbbell)"
                 placeholderTextColor={Colors.textDisabled}
                 value={newEquipment}
@@ -791,8 +757,7 @@ export default function WorkoutScreen() {
             <>
               <View style={styles.filterRowWrap}>
                 <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
+                  horizontal showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.tabRowContent}
                   style={styles.tabRow}
                 >
@@ -812,12 +777,11 @@ export default function WorkoutScreen() {
 
               <View style={styles.filterRowWrap}>
                 <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
+                  horizontal showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.tabRowContent}
                   style={styles.tabRow}
                 >
-                  {['all', 'Barbell', 'Bodyweight', 'Cable', 'Dumbbell', 'Machine'].map(eq => (
+                  {EQUIPMENT_FILTERS.map(eq => (
                     <Pressable
                       key={eq}
                       style={[styles.tab, activeEquipment === eq && styles.tabActive]}
@@ -862,27 +826,21 @@ export default function WorkoutScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: AppColors) => StyleSheet.create({
   screen: { flex: 1, backgroundColor: Colors.background },
   container: { flex: 1 },
   content: { padding: Spacing.lg, paddingTop: Spacing.xl + Spacing.lg },
-  screenTitle: {
-    fontSize: FontSize.xl, fontWeight: '700',
-    color: Colors.text, marginBottom: Spacing.lg,
-  },
+  screenTitle: { fontSize: FontSize.xl, fontWeight: '700', color: Colors.text, marginBottom: Spacing.lg },
   input: {
     backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border,
     borderRadius: Radius.md, padding: Spacing.md,
     color: Colors.text, fontSize: FontSize.md, marginBottom: Spacing.md,
   },
+  inputSpacedTop: { marginTop: Spacing.md },
 
-  // ── State 1 ──
   startBlankButton: {
-    backgroundColor: Colors.primary,
-    padding: Spacing.lg,
-    borderRadius: Radius.md,
-    alignItems: 'center',
-    marginBottom: Spacing.xl,
+    backgroundColor: Colors.primary, padding: Spacing.lg,
+    borderRadius: Radius.md, alignItems: 'center', marginBottom: Spacing.xl,
   },
   startBlankText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700' },
   sectionHeader: {
@@ -899,42 +857,30 @@ const styles = StyleSheet.create({
   proCard: {
     backgroundColor: Colors.surface, borderRadius: Radius.lg,
     padding: Spacing.md, marginTop: Spacing.sm,
-    borderWidth: 1, borderColor: Colors.primary, opacity: 0.6,
+    borderWidth: 1, borderColor: Colors.primary,
   },
-  proLabel: {
-    fontSize: FontSize.xs, color: Colors.primary, fontWeight: '700',
-    letterSpacing: 1, marginBottom: 4,
-  },
+  proLabel: { fontSize: FontSize.xs, color: Colors.primary, fontWeight: '700', letterSpacing: 1, marginBottom: 4 },
   proTitle: { fontSize: FontSize.md, fontWeight: '700', color: Colors.text },
   proSub: { fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 4 },
 
-  // ── State 2 header ──
   activeHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.md,
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', marginBottom: Spacing.md,
   },
   stopwatch: { fontSize: 32, fontWeight: '700', color: Colors.text },
   activeHeaderButtons: { flexDirection: 'row', gap: Spacing.sm, alignItems: 'center' },
   cancelButton: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
+    borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border,
   },
   cancelButtonText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '600' },
   finishButton: {
     backgroundColor: Colors.danger,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.md, borderRadius: Radius.md,
   },
   finishButtonDisabled: { opacity: 0.6 },
   finishButtonText: { color: '#fff', fontSize: FontSize.sm, fontWeight: '700' },
 
-  // ── Exercise cards ──
   card: {
     backgroundColor: Colors.surface, borderRadius: Radius.lg,
     padding: Spacing.md, marginBottom: Spacing.md,
@@ -951,17 +897,14 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase', letterSpacing: 0.8, marginTop: 2,
   },
   warmupBtn: {
-    width: 28, height: 28,
-    backgroundColor: Colors.warning,
-    borderRadius: Radius.sm,
-    justifyContent: 'center', alignItems: 'center',
+    width: 28, height: 28, backgroundColor: Colors.warning,
+    borderRadius: Radius.sm, justifyContent: 'center', alignItems: 'center',
     marginLeft: Spacing.sm, marginTop: 2,
   },
   warmupBtnText: { color: '#fff', fontSize: FontSize.xs, fontWeight: '700' },
   cardDeleteHit: { paddingLeft: Spacing.sm, paddingBottom: Spacing.sm },
   cardDeleteText: { color: Colors.danger, fontSize: FontSize.md },
 
-  // Column layout
   setColHeader: {
     flexDirection: 'row', alignItems: 'center',
     paddingBottom: Spacing.xs, marginBottom: Spacing.xs,
@@ -1001,14 +944,8 @@ const styles = StyleSheet.create({
   saveButtonDisabled: { opacity: 0.6 },
   saveButtonText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700' },
 
-  // ── Plate calculator ──
-  plateCalc: {
-    backgroundColor: Colors.surface,
-    borderTopWidth: 1, borderTopColor: Colors.border,
-  },
-  plateCalcHandle: {
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, alignItems: 'center',
-  },
+  plateCalc: { backgroundColor: Colors.surface, borderTopWidth: 1, borderTopColor: Colors.border },
+  plateCalcHandle: { paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, alignItems: 'center' },
   plateCalcHandleText: { color: Colors.primary, fontSize: FontSize.sm, fontWeight: '600' },
   plateCalcBody: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.lg },
   calcLabel: {
@@ -1044,7 +981,6 @@ const styles = StyleSheet.create({
   calcResultText: { color: Colors.text, fontSize: FontSize.md, fontWeight: '600' },
   calcResultError: { color: Colors.textSecondary, fontSize: FontSize.sm },
 
-  // ── Picker modal ──
   modalContainer: { flex: 1, backgroundColor: Colors.background },
   modalHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -1057,9 +993,8 @@ const styles = StyleSheet.create({
   tabRow: { height: 36, flexGrow: 0, flexShrink: 0 },
   tabRowContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 },
   tab: {
-    height: 36, paddingHorizontal: 14, paddingVertical: 0,
-    borderRadius: 0, backgroundColor: Colors.surface,
-    borderWidth: 1, borderColor: Colors.border,
+    height: 36, paddingHorizontal: 14, paddingVertical: 0, borderRadius: 0,
+    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
     justifyContent: 'center', alignItems: 'center',
   },
   tabActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
@@ -1076,9 +1011,7 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary, fontSize: FontSize.md,
     textAlign: 'center', paddingVertical: Spacing.xl,
   },
-  createButtonWrap: {
-    padding: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.border,
-  },
+  createButtonWrap: { padding: Spacing.lg, borderTopWidth: 1, borderTopColor: Colors.border },
   createButton: {
     backgroundColor: Colors.surface, padding: Spacing.md,
     borderRadius: Radius.md, alignItems: 'center',
@@ -1086,13 +1019,9 @@ const styles = StyleSheet.create({
   },
   createButtonText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '600' },
 
-  // ── Create form ──
   createForm: { flex: 1 },
   createFormContent: { padding: Spacing.lg },
-  fieldLabel: {
-    color: Colors.textSecondary, fontSize: FontSize.sm,
-    fontWeight: '500', marginBottom: Spacing.sm,
-  },
+  fieldLabel: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '500', marginBottom: Spacing.sm },
   compoundRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingVertical: Spacing.md, marginBottom: Spacing.md,

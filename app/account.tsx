@@ -1,14 +1,18 @@
 // app/account.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
   TextInput, Alert, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase, getCurrentUser } from '../lib/supabase';
-import { Colors, Spacing, FontSize, Radius } from '../constants/theme';
+import { useColors } from '../lib/ThemeContext';
+import { type AppColors, Spacing, FontSize, Radius } from '../constants/theme';
 
 export default function AccountScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+
   const [fullName, setFullName] = useState('');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
@@ -101,14 +105,11 @@ export default function AccountScreen() {
         {username ? <Text style={styles.usernameText}>@{username}</Text> : null}
       </View>
 
-      {/* Email */}
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Email</Text>
         <View style={styles.infoRow}>
           <Text style={styles.infoValue} numberOfLines={1}>{email}</Text>
-          <Pressable
-            onPress={() => { setShowEmailForm(v => !v); setShowPasswordForm(false); }}
-          >
+          <Pressable onPress={() => { setShowEmailForm(v => !v); setShowPasswordForm(false); }}>
             <Text style={styles.actionLink}>{showEmailForm ? 'Cancel' : 'Update'}</Text>
           </Pressable>
         </View>
@@ -137,14 +138,11 @@ export default function AccountScreen() {
         )}
       </View>
 
-      {/* Password */}
       <View style={styles.section}>
         <Text style={styles.sectionLabel}>Password</Text>
         <View style={styles.infoRow}>
           <Text style={styles.infoValue}>••••••••</Text>
-          <Pressable
-            onPress={() => { setShowPasswordForm(v => !v); setShowEmailForm(false); }}
-          >
+          <Pressable onPress={() => { setShowPasswordForm(v => !v); setShowEmailForm(false); }}>
             <Text style={styles.actionLink}>{showPasswordForm ? 'Cancel' : 'Update'}</Text>
           </Pressable>
         </View>
@@ -185,21 +183,17 @@ export default function AccountScreen() {
 
 const AVATAR_SIZE = 64;
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: AppColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { padding: Spacing.lg, paddingTop: Spacing.xl },
-  centered: {
-    flex: 1, justifyContent: 'center', alignItems: 'center',
-    backgroundColor: Colors.background,
-  },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background },
   backButton: { marginBottom: Spacing.lg },
   backText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '500' },
 
   profileHeader: { alignItems: 'center', marginBottom: Spacing.xl },
   avatar: {
     width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: AVATAR_SIZE / 2,
-    backgroundColor: Colors.primary,
-    justifyContent: 'center', alignItems: 'center',
+    backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center',
     marginBottom: Spacing.md,
   },
   avatarText: { color: '#fff', fontSize: FontSize.xl, fontWeight: '700' },
@@ -215,9 +209,7 @@ const styles = StyleSheet.create({
     fontSize: FontSize.xs, color: Colors.primary, fontWeight: '600',
     textTransform: 'uppercase', letterSpacing: 1, marginBottom: Spacing.sm,
   },
-  infoRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-  },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   infoValue: { fontSize: FontSize.md, color: Colors.text, flex: 1, marginRight: Spacing.md },
   actionLink: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: '600' },
 

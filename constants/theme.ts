@@ -1,22 +1,42 @@
 // constants/theme.ts
 
-export const Colors = {
-  primary: '#6C47FF',          // Main purple — buttons, active states
-  primaryLight: '#EDE9FF',     // Light purple — backgrounds, tags
-  secondary: '#FF6B35',        // Orange — accents, highlights
-  success: '#22C55E',          // Green — PRs, positive trends
-  warning: '#F59E0B',          // Amber — plateau alerts
-  danger: '#EF4444',           // Red — errors, decline trends
+export const DarkColors = {
+  primary: '#6C47FF',
+  primaryLight: '#EDE9FF',
+  secondary: '#FF6B35',
+  success: '#22C55E',
+  warning: '#F59E0B',
+  danger: '#EF4444',
 
-  background: '#0F0F0F',       // Near-black app background
-  surface: '#1A1A1A',          // Card/component background
-  surfaceAlt: '#242424',       // Slightly lighter surface for nested cards
-  border: '#2E2E2E',           // Subtle borders
+  background: '#0F0F0F',
+  surface: '#1A1A1A',
+  surfaceAlt: '#242424',
+  border: '#2E2E2E',
 
-  text: '#F5F5F5',             // Primary text (near-white)
-  textSecondary: '#9CA3AF',    // Muted text — labels, timestamps
-  textDisabled: '#4B5563',     // Disabled/placeholder text
+  text: '#F5F5F5',
+  textSecondary: '#9CA3AF',
+  textDisabled: '#4B5563',
 };
+
+export const LightColors = {
+  primary: '#6C47FF',
+  primaryLight: '#EDE9FF',
+  secondary: '#FF6B35',
+  success: '#22C55E',
+  warning: '#F59E0B',
+  danger: '#EF4444',
+
+  background: '#F2F2F7',
+  surface: '#FFFFFF',
+  surfaceAlt: '#E8E8ED',
+  border: '#D1D1D6',
+
+  text: '#111111',
+  textSecondary: '#6B7280',
+  textDisabled: '#AEAEB2',
+};
+
+export type AppColors = typeof DarkColors;
 
 export const Spacing = {
   xs: 4,
@@ -40,5 +60,5 @@ export const Radius = {
   sm: 6,
   md: 10,
   lg: 16,
-  full: 999,   // For pill-shaped elements
+  full: 999,
 };

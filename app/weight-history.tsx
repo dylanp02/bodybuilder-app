@@ -1,12 +1,15 @@
-// app/weight-history.tsx
-import { useEffect, useState } from 'react';
+// app/weight-history.tsx — log daily bodyweight and view trend chart
+import { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
   TextInput, Alert, ActivityIndicator,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase, getCurrentUser } from '../lib/supabase';
-import { Colors, Spacing, FontSize, Radius } from '../constants/theme';
+import { useColors } from '../lib/ThemeContext';
+import { type AppColors, Spacing, FontSize, Radius } from '../constants/theme';
+import LineChart from '../components/LineChart';
+import { formatLongDate } from '../lib/utils';
 
 interface WeightLog {
   id: string;
@@ -15,10 +18,13 @@ interface WeightLog {
 }
 
 export default function WeightHistoryScreen() {
-  const [logs, setLogs] = useState<WeightLog[]>([]);
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+
+  const [logs, setLogs]       = useState<WeightLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [weight, setWeight] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [weight, setWeight]   = useState('');
+  const [saving, setSaving]   = useState(false);
 
   useEffect(() => { loadLogs(); }, []);
 
@@ -43,7 +49,10 @@ export default function WeightHistoryScreen() {
     const today = new Date().toISOString().split('T')[0];
     const { error } = await supabase
       .from('weight_logs')
-      .insert({ user_id: user.id, weight_lbs: val, date: today });
+      .upsert(
+        { user_id: user.id, weight_lbs: val, date: today },
+        { onConflict: 'user_id,date' },
+      );
     if (error) {
       Alert.alert('Error', error.message);
     } else {
@@ -53,6 +62,12 @@ export default function WeightHistoryScreen() {
     setSaving(false);
   };
 
+  // Oldest-first for left-to-right chart rendering
+  const chartPoints = useMemo(
+    () => [...logs].reverse().map(l => ({ date: l.date, value: l.weight_lbs })),
+    [logs],
+  );
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Pressable style={styles.backButton} onPress={() => router.back()}>
@@ -61,6 +76,7 @@ export default function WeightHistoryScreen() {
 
       <Text style={styles.title}>Body Weight</Text>
 
+      {/* Log card */}
       <View style={styles.card}>
         <Text style={styles.cardLabel}>Log Today's Weight</Text>
         <View style={styles.inputRow}>
@@ -83,20 +99,25 @@ export default function WeightHistoryScreen() {
         </View>
       </View>
 
+      {/* Weight trend chart — visible once at least 2 entries exist */}
+      {!loading && chartPoints.length >= 2 && (
+        <View style={styles.chartCard}>
+          <Text style={styles.cardLabel}>Weight Trend</Text>
+          <LineChart points={chartPoints} color={Colors.primary} height={160} />
+        </View>
+      )}
+
+      {/* History list */}
       <Text style={styles.sectionTitle}>History</Text>
 
       {loading ? (
-        <ActivityIndicator color={Colors.primary} style={{ marginTop: Spacing.lg }} />
+        <ActivityIndicator color={Colors.primary} style={styles.loader} />
       ) : logs.length === 0 ? (
         <Text style={styles.emptyText}>No weight entries yet</Text>
       ) : (
         logs.map(log => (
           <View key={log.id} style={styles.logRow}>
-            <Text style={styles.logDate}>
-              {new Date(log.date).toLocaleDateString('en-US', {
-                weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-              })}
-            </Text>
+            <Text style={styles.logDate}>{formatLongDate(log.date)}</Text>
             <Text style={styles.logWeight}>{log.weight_lbs} lbs</Text>
           </View>
         ))
@@ -105,16 +126,19 @@ export default function WeightHistoryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: AppColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { padding: Spacing.lg, paddingTop: Spacing.xl },
   backButton: { marginBottom: Spacing.lg },
   backText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '500' },
-  title: {
-    fontSize: FontSize.xl, fontWeight: '700',
-    color: Colors.text, marginBottom: Spacing.xl,
-  },
+  title: { fontSize: FontSize.xl, fontWeight: '700', color: Colors.text, marginBottom: Spacing.xl },
+
   card: {
+    backgroundColor: Colors.surface, borderRadius: Radius.lg,
+    padding: Spacing.lg, marginBottom: Spacing.md,
+    borderWidth: 1, borderColor: Colors.border,
+  },
+  chartCard: {
     backgroundColor: Colors.surface, borderRadius: Radius.lg,
     padding: Spacing.lg, marginBottom: Spacing.xl,
     borderWidth: 1, borderColor: Colors.border,
@@ -125,23 +149,22 @@ const styles = StyleSheet.create({
   },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
   input: {
-    flex: 1,
-    backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border,
-    borderRadius: Radius.md, padding: Spacing.md,
-    color: Colors.text, fontSize: FontSize.md,
+    flex: 1, backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.md, padding: Spacing.md, color: Colors.text, fontSize: FontSize.md,
   },
   unit: { fontSize: FontSize.md, color: Colors.textSecondary, fontWeight: '500' },
   logButton: {
     backgroundColor: Colors.primary,
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
-    borderRadius: Radius.md,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, borderRadius: Radius.md,
   },
   buttonDisabled: { opacity: 0.6 },
   logButtonText: { color: '#fff', fontWeight: '700', fontSize: FontSize.md },
+
   sectionTitle: {
     fontSize: FontSize.sm, color: Colors.textSecondary, fontWeight: '600',
     textTransform: 'uppercase', letterSpacing: 1, marginBottom: Spacing.sm,
   },
+  loader: { marginTop: Spacing.lg },
   emptyText: {
     color: Colors.textSecondary, fontSize: FontSize.md,
     textAlign: 'center', marginTop: Spacing.lg,

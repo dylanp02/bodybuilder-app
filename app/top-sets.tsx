@@ -1,4 +1,4 @@
-// app/top-sets.tsx
+// app/top-sets.tsx — log pre-app personal bests for exercises (1RM or working sets)
 import { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView,
@@ -6,21 +6,10 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase, getCurrentUser } from '../lib/supabase';
-import { Colors, Spacing, FontSize, Radius } from '../constants/theme';
+import { useColors } from '../lib/ThemeContext';
+import { type AppColors, Spacing, FontSize, Radius } from '../constants/theme';
 import { Exercise, MuscleGroup } from '../lib/types';
-
-const MUSCLE_GROUPS: { key: 'all' | MuscleGroup; label: string }[] = [
-  { key: 'all',       label: 'All' },
-  { key: 'chest',     label: 'Chest' },
-  { key: 'back',      label: 'Back' },
-  { key: 'shoulders', label: 'Shoulders' },
-  { key: 'biceps',    label: 'Biceps' },
-  { key: 'triceps',   label: 'Triceps' },
-  { key: 'legs',      label: 'Legs' },
-  { key: 'glutes',    label: 'Glutes' },
-  { key: 'core',      label: 'Core' },
-  { key: 'cardio',    label: 'Cardio' },
-];
+import { MUSCLE_GROUPS, EQUIPMENT_FILTERS } from '../lib/constants';
 
 type SetType = '1rm' | 'working';
 
@@ -33,16 +22,17 @@ interface TopSet {
 }
 
 export default function TopSetsScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => makeStyles(Colors), [Colors]);
+
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [topSets, setTopSets] = useState<TopSet[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Picker
   const [showPicker, setShowPicker] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | MuscleGroup>('all');
   const [activeEquipment, setActiveEquipment] = useState('all');
 
-  // Form
   const [selectedExercise, setSelectedExercise] = useState<Exercise | null>(null);
   const [setType, setSetType] = useState<SetType>('1rm');
   const [reps, setReps] = useState('');
@@ -55,8 +45,11 @@ export default function TopSetsScreen() {
   }, []);
 
   const loadExercises = async () => {
-    const { data } = await supabase.from('exercises').select('*').order('name');
-    if (data) setExercises(data);
+    const { data } = await supabase
+      .from('exercises')
+      .select('id, name, muscle_group, equipment, is_compound, notes')
+      .order('name');
+    if (data) setExercises(data as Exercise[]);
   };
 
   const loadTopSets = async () => {
@@ -133,7 +126,7 @@ export default function TopSetsScreen() {
         {selectedExercise ? (
           <View style={styles.formCard}>
             <View style={styles.formCardHeader}>
-              <View style={{ flex: 1 }}>
+              <View style={styles.formCardLeft}>
                 <Text style={styles.exerciseName}>{selectedExercise.name}</Text>
                 <Text style={styles.muscleGroup}>{selectedExercise.muscle_group}</Text>
               </View>
@@ -204,7 +197,7 @@ export default function TopSetsScreen() {
             <Text style={styles.sectionTitle}>Recorded Top Sets</Text>
             {topSets.map(ts => (
               <View key={ts.id} style={styles.topSetRow}>
-                <View style={{ flex: 1 }}>
+                <View style={styles.topSetLeft}>
                   <Text style={styles.tsExercise}>{ts.exercises.name}</Text>
                   <Text style={styles.tsMeta}>
                     {ts.set_type === '1rm'
@@ -223,7 +216,6 @@ export default function TopSetsScreen() {
         ) : null}
       </ScrollView>
 
-      {/* Exercise Picker Modal */}
       <Modal
         visible={showPicker}
         animationType="slide"
@@ -264,7 +256,7 @@ export default function TopSetsScreen() {
               contentContainerStyle={styles.tabRowContent}
               style={styles.tabRow}
             >
-              {['all', 'Barbell', 'Bodyweight', 'Cable', 'Dumbbell', 'Machine'].map(eq => (
+              {EQUIPMENT_FILTERS.map(eq => (
                 <Pressable
                   key={eq}
                   style={[styles.tab, activeEquipment === eq && styles.tabActive]}
@@ -301,17 +293,13 @@ export default function TopSetsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const makeStyles = (Colors: AppColors) => StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   content: { padding: Spacing.lg, paddingTop: Spacing.xl },
   backButton: { marginBottom: Spacing.lg },
   backText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '500' },
-  title: {
-    fontSize: FontSize.xl, fontWeight: '700', color: Colors.text, marginBottom: Spacing.xs,
-  },
-  subtitle: {
-    fontSize: FontSize.sm, color: Colors.textSecondary, marginBottom: Spacing.xl,
-  },
+  title: { fontSize: FontSize.xl, fontWeight: '700', color: Colors.text, marginBottom: Spacing.xs },
+  subtitle: { fontSize: FontSize.sm, color: Colors.textSecondary, marginBottom: Spacing.xl },
 
   addButton: {
     borderWidth: 1, borderColor: Colors.primary,
@@ -329,6 +317,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between',
     alignItems: 'flex-start', marginBottom: Spacing.md,
   },
+  formCardLeft: { flex: 1 },
+  topSetLeft: { flex: 1 },
   exerciseName: { fontSize: FontSize.lg, fontWeight: '700', color: Colors.text },
   muscleGroup: {
     fontSize: FontSize.xs, color: Colors.primary, fontWeight: '600',
@@ -336,15 +326,12 @@ const styles = StyleSheet.create({
   },
   changeLink: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: '600' },
 
-  fieldLabel: {
-    color: Colors.textSecondary, fontSize: FontSize.sm,
-    fontWeight: '500', marginBottom: Spacing.sm,
-  },
+  fieldLabel: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '500', marginBottom: Spacing.sm },
   typeRow: { flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.md },
   typeBtn: {
-    flex: 1, paddingVertical: Spacing.sm,
-    borderRadius: Radius.md, borderWidth: 1, borderColor: Colors.border,
-    alignItems: 'center', backgroundColor: Colors.surfaceAlt,
+    flex: 1, paddingVertical: Spacing.sm, borderRadius: Radius.md,
+    borderWidth: 1, borderColor: Colors.border, alignItems: 'center',
+    backgroundColor: Colors.surfaceAlt,
   },
   typeBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   typeBtnText: { color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '600' },
@@ -374,15 +361,11 @@ const styles = StyleSheet.create({
   },
   tsExercise: { fontSize: FontSize.md, fontWeight: '600', color: Colors.text },
   tsMeta: { fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 2 },
-  pill: {
-    paddingHorizontal: Spacing.sm, paddingVertical: 3,
-    borderRadius: Radius.full,
-  },
+  pill: { paddingHorizontal: Spacing.sm, paddingVertical: 3, borderRadius: Radius.full },
   pill1RM: { backgroundColor: Colors.primary },
   pillWorking: { backgroundColor: Colors.success },
   pillText: { color: '#fff', fontSize: FontSize.xs, fontWeight: '700' },
 
-  // Picker modal
   modalContainer: { flex: 1, backgroundColor: Colors.background },
   modalHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
@@ -395,9 +378,8 @@ const styles = StyleSheet.create({
   tabRow: { height: 36, flexGrow: 0, flexShrink: 0 },
   tabRowContent: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16 },
   tab: {
-    height: 36, paddingHorizontal: 14, paddingVertical: 0,
-    borderRadius: 0, backgroundColor: Colors.surface,
-    borderWidth: 1, borderColor: Colors.border,
+    height: 36, paddingHorizontal: 14, paddingVertical: 0, borderRadius: 0,
+    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
     justifyContent: 'center', alignItems: 'center',
   },
   tabActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
