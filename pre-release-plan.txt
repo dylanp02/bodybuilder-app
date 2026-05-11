@@ -1,0 +1,437 @@
+=============================================================
+  BODYBUILDERAPP — PRE-RELEASE PLANNING BRIEF
+  For use by a Claude planning agent to scope and sequence
+  work toward Android + iOS production deployment.
+=============================================================
+
+-------------------------------------------------------------------
+TECH STACK
+-------------------------------------------------------------------
+- Framework:      React Native via Expo SDK 54
+- Routing:        Expo Router v6 (file-based, Stack + Tabs)
+- Language:       TypeScript (strict)
+- Backend:        Supabase (Postgres + Auth + RLS + Edge Functions)
+- Styling:        React Native StyleSheet, dynamic dark/light theme
+                  via React Context (useColors + makeStyles pattern)
+- State:          useState / useContext — no external state library
+- Navigation:     expo-router (router.push / router.replace)
+- Notifications:  expo-notifications (local only; push stubbed)
+- Storage:        AsyncStorage (prefs, session flags)
+- Charts:         Custom LineChart component (components/LineChart.tsx)
+- Pro gating:     Single compile-time flag in lib/proAccess.ts
+                  (DEV_PRO_UNLOCKED: boolean)
+- Payments:       Subscription UI only — no payment SDK integrated yet
+- Build:          Currently Expo Go only — no EAS build exists yet
+
+-------------------------------------------------------------------
+PROJECT DIRECTORY STRUCTURE (key files)
+-------------------------------------------------------------------
+app/
+  _layout.tsx               Root layout — auth/onboarding/(tabs) gate,
+                            ProBanner, black status-bar spacer via
+                            useSafeAreaInsets
+  auth.tsx                  Sign in / sign up (email + password)
+                            Email confirmation currently DISABLED
+                            (comment in file marks where to re-enable)
+  (tabs)/
+    _layout.tsx             Tab bar — Today, Workout, Progress, Planner
+    index.tsx               Today screen — greeting, today workouts,
+                            recent history, profile dropdown
+    workout.tsx             Live workout logger — timer, exercise picker,
+                            warmup modal, plate calculator, historic sets
+    progress.tsx            Calendar, top sets, weight history, charts
+    planner.tsx             Training plan builder (Pro-gated)
+  onboarding/
+    _layout.tsx             Stack for onboarding steps
+    step-name.tsx           Step 1: full name + username (upsert)
+    step-stats.tsx          Step 2: height, weight, unit toggle
+    step-goals.tsx          Step 3: primary goal + experience level
+    step-plan.tsx           Step 4: set up plan or explore first
+                            Sets onboarding_complete = true on profiles
+  workout/[id].tsx          Workout detail — sets logged, exercise list
+  workout-detail/[id].tsx   Redirect shim → /workout/[id]
+  measurements.tsx          Body measurements — 9 fields, trend charts
+                            (Pro-gated via Redirect to /subscription)
+  workout-template.tsx      Template builder — full exercise picker,
+                            warmup sets, saves to workout_templates table
+                            (Pro-gated via Redirect to /subscription)
+  subscription.tsx          Pricing UI — 3 tiers, features list
+                            Buttons show Alert "Coming Soon"
+  notifications.tsx         Notification prefs — enable, mute duration
+                            dialog (1h/12h/1d/indefinite), time pickers
+  settings.tsx              Dark/light toggle, notifications link
+  account.tsx               Profile info display
+  goals.tsx                 Goal + experience selection, tracking links
+                            Measurements card has Pro badge styling
+  weight-history.tsx        Weight log + chart
+  top-sets.tsx              Personal best recorder
+
+lib/
+  supabase.ts               Supabase client + getCurrentUser()
+  ThemeContext.tsx           Dark/light theme context + useColors()
+  proAccess.ts              DEV_PRO_UNLOCKED = false (compile-time flag)
+                            *** NO runtime/per-user check exists ***
+  notifications.ts          Local notification scheduling logic
+                            expo-notifications — NO-OP in Expo Go,
+                            requires dev build. Comment block explains.
+  notifPrefs.ts             AsyncStorage-backed notification prefs
+                            includes mutedUntil: string | null for
+                            timed mutes with auto-expiry
+  planProjection.ts         Projects training plan days onto calendar
+  types.ts                  Shared TypeScript interfaces
+  constants.ts              MUSCLE_GROUPS, EQUIPMENT_FILTERS arrays
+  utils.ts                  Date formatting helpers
+
+components/
+  ProBanner.tsx             Global plan status banner — "Standard Plan
+                            → Go Pro!" (tappable) or "★ Pro Plan"
+                            Reads DEV_PRO_UNLOCKED (will read ProContext
+                            once runtime check is built)
+  LineChart.tsx             SVG line chart with grid, y-axis labels
+
+constants/
+  theme.ts                  AppColors type, Spacing, FontSize, Radius
+
+supabase/
+  rls_exercises.sql         RLS policy SQL for exercises table
+
+-------------------------------------------------------------------
+SUPABASE SCHEMA (current tables)
+-------------------------------------------------------------------
+profiles
+  id uuid (FK auth.users)
+  username text NOT NULL
+  full_name text
+  height_inches numeric
+  weight_lbs numeric
+  goal text
+  experience_level text
+  onboarding_complete boolean DEFAULT false
+  ** NEEDS: is_pro boolean DEFAULT false
+  ** NEEDS: push_token text
+
+workouts
+  id uuid PK
+  user_id uuid FK
+  name text
+  date date
+  created_at timestamptz
+
+workout_sets
+  id uuid PK
+  workout_id uuid FK
+  exercise_id uuid FK
+  set_number int
+  reps int
+  weight_lbs numeric
+
+exercises
+  id uuid PK
+  name text
+  muscle_group text
+  equipment text
+  is_compound boolean
+  notes text
+  ** NOTE: currently SHARED across all users (no user_id)
+  ** DECISION NEEDED: keep as shared library or make user-scoped?
+
+weight_logs
+  id uuid PK
+  user_id uuid FK
+  date date
+  weight_lbs numeric
+
+measurements
+  id uuid PK
+  user_id uuid FK
+  date date
+  neck_in, chest_in, shoulders_in, biceps_in, forearms_in,
+  thighs_in, calves_in, waist_in, hips_in (all numeric nullable)
+  UNIQUE(user_id, date)
+
+workout_templates
+  id uuid PK
+  user_id uuid FK
+  name text
+  exercises jsonb  -- array of TemplateExerciseData objects
+  created_at timestamptz
+
+training_plans
+  id uuid PK
+  user_id uuid FK
+  plan_type text ('weekly' | 'cycle')
+  plan_name text
+  duration_weeks int
+  start_date date
+  schedule jsonb
+  is_active boolean DEFAULT true
+  created_at, updated_at timestamptz
+  UNIQUE INDEX: one active plan per user
+
+All tables: RLS enabled. Policies restrict all operations to
+auth.uid() = user_id. exercises table is shared (no user_id filter).
+
+-------------------------------------------------------------------
+PRO FEATURE GATING — CURRENT STATE
+-------------------------------------------------------------------
+lib/proAccess.ts exports:
+  DEV_PRO_UNLOCKED = false
+
+When false:
+  - measurements.tsx       → <Redirect href="/subscription" />
+  - workout-template.tsx   → <Redirect href="/subscription" />
+  - planner.tsx            → inline gate screen with "View Pro Plan" btn
+  - ProBanner              → shows "Standard Plan → Go Pro!" banner
+
+When true:
+  - All features accessible
+  - ProBanner shows "★ Pro Plan"
+  - DEV badge shown on pro screens
+
+*** There is NO per-user runtime check. is_pro does not yet exist
+    on the profiles table. Payments are not wired. This is the
+    primary gap to close before release. ***
+
+-------------------------------------------------------------------
+PAYMENTS — CURRENT STATE
+-------------------------------------------------------------------
+subscription.tsx shows a pricing UI with 3 tiers:
+  Monthly:   $6.99 / month
+  6 Months:  $24.99 total ($4.17/mo, saves 40%)
+  Yearly:    $39.99 total ($3.33/mo, saves 52%)
+
+Subscribe buttons call:
+  Alert.alert('Coming Soon', ...)
+No payment SDK is installed. No products exist in any store.
+
+-------------------------------------------------------------------
+PRE-RELEASE WORK — FULL SCOPE
+-------------------------------------------------------------------
+
+PHASE 0 — EAS BUILD FOUNDATION
+--------------------------------
+Expo Go cannot run: push notifications, in-app purchases,
+or any native module requiring a custom native layer.
+All phases below depend on a working dev build.
+
+Tasks:
+  - Install EAS CLI, log in, run eas build:configure
+  - Create eas.json with development / preview / production profiles
+  - app.json: set bundleIdentifier (iOS) and package (Android)
+    e.g. com.yourname.bodybuilderapp
+  - Set versionCode, version, app name
+  - Provide icon at 1024x1024 PNG (no alpha, no rounded corners)
+  - Provide splash screen assets at required resolutions
+  - Move Supabase URL + anon key out of lib/supabase.ts into
+    EAS Secrets / app.config.ts extra{} / process.env
+    (currently hardcoded in the file — must not be in source)
+  - Build development client:
+    eas build --profile development --platform all
+  - Distribute .apk / .ipa to test devices
+
+PHASE 1 — PRO SUBSCRIPTION (PAYMENTS + RUNTIME GATING)
+--------------------------------------------------------
+Recommended approach: RevenueCat
+  - Abstracts Apple StoreKit + Google Play Billing
+  - Handles receipt validation, webhooks, subscription lifecycle
+  - Provides dashboard for subscription metrics
+  - react-native-purchases SDK
+
+Steps:
+
+1. RevenueCat dashboard:
+   - Create project, connect App Store + Google Play
+   - Create Entitlement: "pro"
+   - Create 3 Products (monthly, biannual, yearly) per platform
+   - Create Offering containing all 3 Packages
+
+2. App Store Connect:
+   - Create 3 auto-renewable subscription products with matching SKUs
+   - Configure subscription group
+
+3. Google Play Console:
+   - Create 3 subscription products with matching product IDs
+
+4. Install react-native-purchases (requires dev build):
+   import Purchases from 'react-native-purchases';
+   - Initialize on app launch with Supabase user UID as app user ID
+     so purchases are tied to the account across devices
+
+5. Supabase:
+   - ALTER TABLE profiles ADD COLUMN is_pro boolean NOT NULL DEFAULT false;
+   - Create Edge Function: /functions/v1/revenuecat-webhook
+     Validates RevenueCat shared secret, updates profiles.is_pro
+     on events: INITIAL_PURCHASE, RENEWAL, CANCELLATION,
+     EXPIRATION, REFUND, BILLING_ISSUE_DETECTED
+
+6. Runtime ProContext (replaces compile-time flag):
+   - Create lib/ProContext.tsx providing isPro: boolean
+   - In _layout.tsx, alongside the onboarding check, also fetch
+     profiles.is_pro and cache it in the context
+   - Re-check on foreground resume (AppState change)
+   - DEV_PRO_UNLOCKED in lib/proAccess.ts remains as a dev override
+     that short-circuits the context check to true
+   - ProBanner and all gate checks read useProContext().isPro
+     instead of DEV_PRO_UNLOCKED directly
+
+7. Subscription screen:
+   - Fetch current Offerings from RevenueCat on mount
+   - Wire Subscribe buttons to Purchases.purchasePackage(pkg)
+   - Show current plan + next renewal date if already subscribed
+   - Add "Restore Purchases" button (required by App Store guidelines)
+   - Handle errors: user cancelled, billing unavailable, network error
+
+PHASE 2 — PUSH NOTIFICATIONS
+------------------------------
+expo-notifications is installed. Local scheduling works once
+running outside Expo Go. Push (server-triggered) is not wired.
+
+Tasks:
+
+1. On app launch (dev build): call requestNotificationPermission()
+   already in lib/notifications.ts — this will work in dev build
+
+2. Retrieve push token:
+   const token = await Notifications.getExpoPushTokenAsync();
+   Store in profiles.push_token (add column to schema)
+   Re-store on every launch (tokens can rotate)
+
+3. Server-side triggers (Supabase Edge Functions or cron):
+   - Bodyweight reminder:
+     Cron job: find users where last weight_logs.date < now - 5 days
+     AND notif prefs deviceEnabled = true AND deviceMuted = false
+     Send push via Expo Push API or APNs/FCM directly
+   - Training day reminder:
+     Read active training_plan, compute today's day type
+     Send morning + afternoon pushes on training days,
+     morning only on rest days
+
+4. Deep link on notification tap:
+   Set notification data.url to the target route
+   Handle in Linking listener already in _layout.tsx
+
+5. Android notification channel:
+   Already created in lib/notifications.ts as
+   'bodybuilderapp-reminders' — verify it fires in dev build
+
+PHASE 3 — SUPABASE PRODUCTION HARDENING
+-----------------------------------------
+Tasks:
+
+1. Re-enable email confirmation:
+   Location marked with a comment in app/auth.tsx
+   Configure Supabase Auth → Email → Enable confirmations
+   Set up custom SMTP (Resend or SendGrid) so emails come from
+   a branded domain, not noreply@mail.supabase.io
+
+2. Auth redirect URLs:
+   Add production deep link to Supabase Auth allowed redirect URLs:
+   bodybuilderapp://  (already handled in _layout.tsx handleAuthUrl)
+
+3. RLS audit:
+   Verify every table's policies. Current known state:
+     profiles      — owner-only SELECT/UPDATE ✓
+     workouts      — owner-only ALL ✓
+     workout_sets  — owner-only via workout_id join
+     exercises     — SHARED (all users read/write) — CONFIRM INTENT
+     weight_logs   — owner-only ✓
+     measurements  — owner-only ✓
+     workout_templates — owner-only ✓
+     training_plans    — owner-only ✓
+   Add supabase/rls_exercises.sql policy file for any changes
+
+4. Database indexes:
+   CREATE INDEX ON workouts(user_id, date);
+   CREATE INDEX ON workout_sets(workout_id);
+   CREATE INDEX ON weight_logs(user_id, date);
+   CREATE INDEX ON measurements(user_id, date);
+
+5. Secrets:
+   Supabase URL and anon key currently hardcoded in lib/supabase.ts
+   Move to EAS Secrets + app.config.ts extra{} before any build
+
+PHASE 4 — STORE SETUP + TESTING
+---------------------------------
+App Store (iOS):
+  - Apple Developer Program enrollment ($99/year)
+  - App record in App Store Connect
+  - Capabilities: In-App Purchase, Push Notifications
+  - 3 subscription SKUs in a subscription group
+  - StoreKit sandbox accounts for end-to-end purchase testing
+  - Privacy manifest (PrivacyInfo.xcprivacy) — required by Apple
+    for apps using certain APIs including push notifications
+
+Google Play (Android):
+  - Google Play Console enrollment ($25 one-time)
+  - App record, content rating questionnaire (Health & Fitness)
+  - Data safety section — disclose: Supabase data storage,
+    health/fitness data (weight, measurements), no data sold
+  - 3 subscription product IDs matching RevenueCat config
+  - Internal test track for IAP testing with real Google accounts
+
+PHASE 5 — SUBMISSION ASSETS + LAUNCH
+--------------------------------------
+Required assets:
+  - App icon: 1024x1024 PNG, no alpha, no rounded corners
+  - Screenshots: minimum 3 per required device size
+      iOS:     iPhone 6.7" (1290x2796), iPhone 6.5" (1242x2688),
+               iPad Pro 12.9" (2048x2732)
+      Android: Phone (1080x1920 minimum), Tablet
+  - Short description (80 chars) + full description (4000 chars)
+  - Privacy policy URL (required — covers Supabase data, health data)
+  - Terms of service URL
+  - App preview video (optional but improves conversion rate)
+  - Age rating: 4+ / Everyone (no objectionable content)
+
+Crash reporting (strongly recommended before any real users):
+  - Integrate Sentry (@sentry/react-native) or similar
+  - Add error boundary in _layout.tsx
+  - This is very difficult to retrofit after launch
+
+Analytics (optional v1.0 but recommended):
+  - PostHog or Mixpanel for funnel analysis
+  - Key events: sign_up, onboarding_complete, workout_logged,
+    subscription_started, pro_gate_hit
+
+-------------------------------------------------------------------
+OPEN DECISIONS (need answers before implementation)
+-------------------------------------------------------------------
+1. RevenueCat vs direct StoreKit/Play Billing?
+   RevenueCat recommended — saves significant implementation time.
+   Costs ~$0/month under 10k MTR, then $119/month.
+
+2. Free trial?
+   Apple and Google both support free trials on subscriptions.
+   7-day trial on yearly plan is a common conversion driver.
+   Must be decided before creating products in the stores.
+
+3. exercises table — shared or user-scoped?
+   Currently all users share the exercise library. Custom exercises
+   created by one user are visible to all. Decide:
+     Option A: Keep shared (community library) — simpler, no change
+     Option B: Add user_id, make exercises user-scoped — breaking
+               schema change, requires data migration
+
+4. Email notifications in v1.0?
+   The mute/enable toggle exists in the UI but email sending is
+   stubbed (sendEmailBodyweightReminder etc. in lib/notifications.ts
+   do nothing). If not in scope for v1.0, remove the toggle from
+   the UI before submission to avoid user confusion.
+
+5. Crash reporting service?
+   Sentry is free up to 5k errors/month. Must be added before
+   real users — near-impossible to retrofit cleanly post-launch.
+
+-------------------------------------------------------------------
+SUGGESTED PHASE ORDER
+-------------------------------------------------------------------
+Phase 0  EAS build setup, app.json, assets, env secrets
+Phase 1  RevenueCat, is_pro column, webhook, ProContext runtime check
+Phase 2  Push notification dev build testing, server triggers
+Phase 3  Email confirmation, custom SMTP, RLS audit, DB indexes
+Phase 4  Store records, products, sandbox end-to-end testing
+Phase 5  Screenshots, privacy policy, crash reporting, submission
+
+-------------------------------------------------------------------
+END OF BRIEF
+-------------------------------------------------------------------

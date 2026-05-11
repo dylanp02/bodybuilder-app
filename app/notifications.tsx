@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, ScrollView, Switch, ActivityIndicator,
+  View, Text, Pressable, StyleSheet, ScrollView, Switch, ActivityIndicator, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useColors } from '../lib/ThemeContext';
@@ -49,6 +49,46 @@ export default function NotificationsScreen() {
     setSaving(false);
   }, [prefs]);
 
+  const handleMuteToggle = useCallback((enabling: boolean) => {
+    if (!enabling) {
+      // Unmuting — clear immediately
+      update({ deviceMuted: false, mutedUntil: null });
+      return;
+    }
+    Alert.alert(
+      'Mute Notifications',
+      'How long would you like to mute?',
+      [
+        {
+          text: '1 Hour',
+          onPress: () => update({
+            deviceMuted: true,
+            mutedUntil: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          }),
+        },
+        {
+          text: '12 Hours',
+          onPress: () => update({
+            deviceMuted: true,
+            mutedUntil: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+          }),
+        },
+        {
+          text: '1 Day',
+          onPress: () => update({
+            deviceMuted: true,
+            mutedUntil: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          }),
+        },
+        {
+          text: 'Until I Turn It Off',
+          onPress: () => update({ deviceEnabled: false, deviceMuted: false, mutedUntil: null }),
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ]
+    );
+  }, [update]);
+
   if (!prefs) {
     return (
       <View style={styles.centered}>
@@ -87,11 +127,17 @@ export default function NotificationsScreen() {
         <View style={[styles.row, styles.rowDivider, !prefs.deviceEnabled && styles.rowFaded]}>
           <View style={styles.rowLeft}>
             <Text style={styles.rowTitle}>Mute</Text>
-            <Text style={styles.rowSub}>Pause all device notifications temporarily</Text>
+            <Text style={styles.rowSub}>
+              {prefs.deviceMuted && prefs.mutedUntil
+                ? `Muted until ${fmt12(new Date(prefs.mutedUntil).getHours())} on ${new Date(prefs.mutedUntil).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                : prefs.deviceMuted
+                  ? 'Muted indefinitely'
+                  : 'Pause all device notifications temporarily'}
+            </Text>
           </View>
           <Switch
             value={prefs.deviceMuted}
-            onValueChange={v => update({ deviceMuted: v })}
+            onValueChange={handleMuteToggle}
             disabled={!prefs.deviceEnabled}
             trackColor={{ false: Colors.border, true: Colors.textSecondary }}
             thumbColor="#fff"
@@ -173,28 +219,6 @@ export default function NotificationsScreen() {
         ))}
       </View>
 
-      {/* ── Email ── */}
-      <View style={styles.section}>
-        <Text style={styles.sectionLabel}>Email</Text>
-        <View style={styles.row}>
-          <View style={styles.rowLeft}>
-            <Text style={styles.rowTitle}>Email reminders</Text>
-            <Text style={styles.rowSub}>Receive reminders via email (coming soon)</Text>
-          </View>
-          <Switch
-            value={false}
-            disabled
-            trackColor={{ false: Colors.border, true: Colors.primary }}
-            thumbColor="#fff"
-          />
-        </View>
-        <View style={styles.emailNote}>
-          <Text style={styles.emailNoteText}>
-            Email delivery will be available in a future update.
-          </Text>
-        </View>
-      </View>
-
       {saving && (
         <Text style={styles.savingText}>Updating reminders…</Text>
       )}
@@ -238,13 +262,6 @@ const makeStyles = (Colors: AppColors) => StyleSheet.create({
   infoRow: { paddingVertical: Spacing.sm },
   infoLabel: { fontSize: FontSize.sm, fontWeight: '600', color: Colors.text, marginBottom: 2 },
   infoDetail: { fontSize: FontSize.sm, color: Colors.textSecondary },
-
-  emailNote: {
-    backgroundColor: Colors.surfaceAlt, borderRadius: Radius.sm,
-    padding: Spacing.md, marginTop: Spacing.md,
-    borderWidth: 1, borderColor: Colors.border,
-  },
-  emailNoteText: { fontSize: FontSize.sm, color: Colors.textSecondary },
 
   savingText: { textAlign: 'center', color: Colors.textSecondary, fontSize: FontSize.sm, marginTop: Spacing.md },
 });

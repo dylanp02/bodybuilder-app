@@ -25,9 +25,8 @@ const EXPERIENCE: { key: ExpKey; label: string; sub: string }[] = [
 ];
 
 const TRACKING_SECTIONS = [
-  { title: 'Body Weight',   description: 'Log your current weight and view your history',        route: '/weight-history' },
-  { title: 'Top Sets',      description: 'Record personal bests from before you started tracking', route: '/top-sets' },
-  { title: 'Measurements',  description: 'Track neck, chest, waist, hips, biceps, and more',      route: '/measurements' },
+  { title: 'Body Weight', description: 'Log your current weight and view your history',          route: '/weight-history' },
+  { title: 'Top Sets',    description: 'Record personal bests from before you started tracking', route: '/top-sets' },
 ];
 
 export default function GoalsScreen() {
@@ -66,7 +65,8 @@ export default function GoalsScreen() {
     if (!user) { setSaving(false); return; }
     const { error } = await supabase
       .from('profiles')
-      .upsert({ id: user.id, goal: nextGoal, experience_level: nextExp }, { onConflict: 'id' });
+      .update({ goal: nextGoal, experience_level: nextExp })
+      .eq('id', user.id);
     setSaving(false);
     if (error) Alert.alert('Error', error.message);
   }, []);
@@ -82,6 +82,7 @@ export default function GoalsScreen() {
   };
 
   return (
+    <View style={styles.screen}>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Pressable style={styles.backButton} onPress={() => router.back()}>
         <Text style={styles.backText}>← Back</Text>
@@ -162,12 +163,28 @@ export default function GoalsScreen() {
           <Text style={styles.chevron}>›</Text>
         </Pressable>
       ))}
+
+      {/* Measurements — Pro feature */}
+      <Pressable style={styles.proCard} onPress={() => router.push('/measurements' as any)}>
+        <View style={styles.proCardTop}>
+          <View style={styles.proCardLeft}>
+            <Text style={styles.proCardTitle}>Measurements</Text>
+            <Text style={styles.proCardSub}>Track neck, chest, waist, hips, biceps, and more</Text>
+          </View>
+          <View style={styles.proBadge}>
+            <Text style={styles.proBadgeText}>PRO</Text>
+          </View>
+        </View>
+        <Text style={styles.chevron}>›</Text>
+      </Pressable>
     </ScrollView>
+    </View>
   );
 }
 
 const makeStyles = (Colors: AppColors) => StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+  screen: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1 },
   content: { padding: Spacing.lg, paddingTop: Spacing.xl, paddingBottom: Spacing.xxl },
   backButton: { marginBottom: Spacing.lg },
   backText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '500' },
@@ -219,4 +236,20 @@ const makeStyles = (Colors: AppColors) => StyleSheet.create({
   cardTitle: { fontSize: FontSize.lg, fontWeight: '600', color: Colors.text },
   cardSub: { fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 4 },
   chevron: { fontSize: 22, color: Colors.textSecondary, fontWeight: '300' },
+
+  proCard: {
+    backgroundColor: Colors.surface, borderRadius: Radius.lg,
+    padding: Spacing.lg, marginBottom: Spacing.md,
+    borderWidth: 1.5, borderColor: Colors.primary,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+  },
+  proCardTop: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginRight: Spacing.sm },
+  proCardLeft: { flex: 1 },
+  proCardTitle: { fontSize: FontSize.lg, fontWeight: '600', color: Colors.text },
+  proCardSub: { fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 4 },
+  proBadge: {
+    backgroundColor: Colors.primary, borderRadius: Radius.sm,
+    paddingHorizontal: 7, paddingVertical: 2,
+  },
+  proBadgeText: { fontSize: FontSize.xs, color: '#fff', fontWeight: '700', letterSpacing: 0.5 },
 });

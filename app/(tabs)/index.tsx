@@ -81,6 +81,7 @@ export default function TodayScreen() {
           await cancelAllScheduledNotifications();
           await AsyncStorage.multiRemove(['keep_logged_in', 'notif_last_scheduled']);
           await supabase.auth.signOut();
+          router.replace('/auth');
         },
       },
     ]);

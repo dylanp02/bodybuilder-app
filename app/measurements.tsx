@@ -5,7 +5,7 @@ import {
   View, Text, Pressable, StyleSheet, ScrollView,
   TextInput, Alert, ActivityIndicator,
 } from 'react-native';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { supabase, getCurrentUser } from '../lib/supabase';
 import { useColors } from '../lib/ThemeContext';
 import { type AppColors, Spacing, FontSize, Radius } from '../constants/theme';
@@ -29,6 +29,8 @@ type FieldValues = Record<string, string>;
 type MeasurementRow = { id: string; date: string } & Record<string, number | null>;
 
 export default function MeasurementsScreen() {
+  if (!DEV_PRO_UNLOCKED) return <Redirect href="/subscription" />;
+
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
 
@@ -92,6 +94,7 @@ export default function MeasurementsScreen() {
   };
 
   return (
+    <View style={styles.screen}>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
@@ -207,11 +210,13 @@ export default function MeasurementsScreen() {
         })
       )}
     </ScrollView>
+    </View>
   );
 }
 
 const makeStyles = (Colors: AppColors) => StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background },
+  screen: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1 },
   content: { padding: Spacing.lg, paddingTop: Spacing.xl },
   backButton: { marginBottom: Spacing.lg },
   backText: { color: Colors.primary, fontSize: FontSize.md, fontWeight: '500' },

@@ -1,10 +1,10 @@
 // app/(tabs)/workout.tsx — active workout logger with plate calculator and exercise picker
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, TextInput, Pressable, StyleSheet,
   ScrollView, Alert, Modal, FlatList, Switch,
 } from 'react-native';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { supabase, getCurrentUser } from '../../lib/supabase';
 import { useColors } from '../../lib/ThemeContext';
 import { type AppColors, Spacing, FontSize, Radius } from '../../constants/theme';
@@ -27,6 +27,21 @@ interface ExerciseCard {
   exercise: Exercise;
   sets: SetEntry[];
   historicSets: HistoricSet[];
+}
+
+interface TemplateExerciseData {
+  exerciseId: string;
+  exerciseName: string;
+  muscleGroup: string;
+  equipment: string | null;
+  isCompound: boolean;
+  sets: SetEntry[];
+}
+
+interface SavedTemplate {
+  id: string;
+  name: string;
+  exercises: TemplateExerciseData[];
 }
 
 const ALL_PLATE_SIZES = [45, 35, 25, 10, 5, 2.5, 1];
@@ -71,6 +86,7 @@ export default function WorkoutScreen() {
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
 
   const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
 
   const [workoutActive, setWorkoutActive] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -102,6 +118,8 @@ export default function WorkoutScreen() {
 
   useEffect(() => { loadExercises(); }, []);
 
+  useFocusEffect(useCallback(() => { loadSavedTemplates(); }, []));
+
   useEffect(() => {
     if (!workoutActive) return;
     const timer = setInterval(() => setElapsed(s => s + 1), 1000);
@@ -114,6 +132,17 @@ export default function WorkoutScreen() {
       .select('id, name, muscle_group, equipment, is_compound, notes')
       .order('name');
     if (data) setExercises(data as Exercise[]);
+  };
+
+  const loadSavedTemplates = async () => {
+    const user = await getCurrentUser();
+    if (!user) return;
+    const { data } = await supabase
+      .from('workout_templates')
+      .select('id, name, exercises')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+    if (data) setSavedTemplates(data as SavedTemplate[]);
   };
 
   const filteredExercises = useMemo(() => {
@@ -199,6 +228,28 @@ export default function WorkoutScreen() {
         });
       }
     }
+    setWorkoutName(template.name);
+    setCards(templateCards);
+    setElapsed(0);
+    setWorkoutActive(true);
+    for (const card of templateCards) {
+      loadHistoricSets(card.exercise.id, card.id);
+    }
+  };
+
+  const startFromSavedTemplate = (template: SavedTemplate) => {
+    const templateCards: ExerciseCard[] = template.exercises.map(e => {
+      const found = exercises.find(ex => ex.id === e.exerciseId);
+      const exercise: Exercise = found ?? {
+        id: e.exerciseId,
+        name: e.exerciseName,
+        muscle_group: e.muscleGroup as MuscleGroup,
+        equipment: e.equipment ?? undefined,
+        is_compound: e.isCompound,
+      } as Exercise;
+      const cardId = `${e.exerciseId}-${Date.now()}-${Math.random()}`;
+      return { id: cardId, exercise, sets: e.sets.map(s => ({ ...s })), historicSets: [] };
+    });
     setWorkoutName(template.name);
     setCards(templateCards);
     setElapsed(0);
@@ -410,8 +461,26 @@ export default function WorkoutScreen() {
                 </Pressable>
               ))}
 
+              {savedTemplates.length > 0 && (
+                <>
+                  <Text style={styles.sectionHeader}>My Templates</Text>
+                  {savedTemplates.map(t => (
+                    <Pressable
+                      key={t.id}
+                      style={styles.templateCard}
+                      onPress={() => startFromSavedTemplate(t)}
+                    >
+                      <Text style={styles.templateName}>{t.name}</Text>
+                      <Text style={styles.templateExercises} numberOfLines={2}>
+                        {t.exercises.map(e => e.exerciseName).join(' · ')}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </>
+              )}
+
               <Pressable style={styles.proCard} onPress={() => router.push('/workout-template')}>
-                <Text style={styles.proLabel}>PRO  ·  DEV UNLOCKED</Text>
+                <Text style={styles.proLabel}>PRO</Text>
                 <Text style={styles.proTitle}>Create Custom Template</Text>
                 <Text style={styles.proSub}>Build and save your own reusable workout structure</Text>
               </Pressable>

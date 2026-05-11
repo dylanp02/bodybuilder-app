@@ -18,7 +18,7 @@ import {
   View, Text, TextInput, Pressable, StyleSheet,
   ScrollView, Alert, Modal, FlatList, Switch, ActivityIndicator,
 } from 'react-native';
-import { router } from 'expo-router';
+import { Redirect, router } from 'expo-router';
 import { supabase, getCurrentUser } from '../lib/supabase';
 import { useColors } from '../lib/ThemeContext';
 import { type AppColors, Spacing, FontSize, Radius } from '../constants/theme';
@@ -55,6 +55,8 @@ interface SavedTemplate {
 }
 
 export default function WorkoutTemplateScreen() {
+  if (!DEV_PRO_UNLOCKED) return <Redirect href="/subscription" />;
+
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
 

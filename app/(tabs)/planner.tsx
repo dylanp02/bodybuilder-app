@@ -37,7 +37,9 @@ import {
   View, Text, Pressable, StyleSheet, ScrollView,
   TextInput, Alert, Modal, ActivityIndicator,
 } from 'react-native';
+import { router } from 'expo-router';
 import { supabase } from '../../lib/supabase';
+import { DEV_PRO_UNLOCKED } from '../../lib/proAccess';
 import { useColors } from '../../lib/ThemeContext';
 import { type AppColors, Spacing, FontSize, Radius } from '../../constants/theme';
 import {
@@ -162,6 +164,23 @@ type PlannerState = 'loading' | 'no_plan' | 'building' | 'active';
 export default function PlannerScreen() {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
+
+  if (!DEV_PRO_UNLOCKED) {
+    return (
+      <View style={styles.screen}>
+
+        <View style={styles.proGate}>
+          <Text style={styles.proGateTitle}>Training Planner</Text>
+          <Text style={styles.proGateSub}>
+            Build a structured training plan with weekly or cycle-based programming.
+          </Text>
+          <Pressable style={styles.proGateBtn} onPress={() => router.push('/subscription')}>
+            <Text style={styles.proGateBtnText}>View Pro Plan</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   // ── Top-level state machine ──
   const [plannerState, setPlannerState] = useState<PlannerState>('loading');
@@ -402,8 +421,11 @@ export default function PlannerScreen() {
 
   if (plannerState === 'loading') {
     return (
-      <View style={styles.centered}>
-        <ActivityIndicator color={Colors.primary} />
+      <View style={styles.screen}>
+
+        <View style={styles.centered}>
+          <ActivityIndicator color={Colors.primary} />
+        </View>
       </View>
     );
   }
@@ -412,7 +434,9 @@ export default function PlannerScreen() {
 
   if (plannerState === 'no_plan') {
     return (
-      <ScrollView style={styles.screen} contentContainerStyle={styles.centeredContent}>
+      <View style={styles.screen}>
+
+      <ScrollView style={styles.container} contentContainerStyle={styles.centeredContent}>
         <View style={styles.titleRow}>
           <Text style={styles.screenTitle}>Planner</Text>
           <View style={styles.proBadge}><Text style={styles.proBadgeText}>PRO</Text></View>
@@ -427,6 +451,7 @@ export default function PlannerScreen() {
           <Text style={styles.primaryBtnText}>Create New Plan</Text>
         </Pressable>
       </ScrollView>
+      </View>
     );
   }
 
@@ -434,8 +459,10 @@ export default function PlannerScreen() {
 
   if (plannerState === 'building') {
     return (
+      <View style={styles.screen}>
+
       <ScrollView
-        style={styles.screen}
+        style={styles.container}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
@@ -801,6 +828,7 @@ export default function PlannerScreen() {
           </View>
         </Modal>
       </ScrollView>
+      </View>
     );
   }
 
@@ -811,7 +839,9 @@ export default function PlannerScreen() {
     const weekSched = isWeekly ? (activePlan.schedule as WeeklySchedule) : null;
 
     return (
-      <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      <View style={styles.screen}>
+
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         {/* Header */}
         <View style={styles.titleRow}>
           <Text style={styles.screenTitle}>Planner</Text>
@@ -952,6 +982,7 @@ export default function PlannerScreen() {
           </View>
         ))}
       </ScrollView>
+      </View>
     );
   }
 
@@ -961,7 +992,20 @@ export default function PlannerScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const makeStyles = (Colors: AppColors) => StyleSheet.create({
+  proGate: {
+    flex: 1,
+    justifyContent: 'center', alignItems: 'center', padding: Spacing.xl,
+  },
+  proGateTitle: { fontSize: FontSize.xl, fontWeight: '700', color: Colors.text, marginBottom: Spacing.sm, textAlign: 'center' },
+  proGateSub: { fontSize: FontSize.md, color: Colors.textSecondary, textAlign: 'center', lineHeight: 22, marginBottom: Spacing.xl },
+  proGateBtn: {
+    backgroundColor: Colors.primary, borderRadius: Radius.md,
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md,
+  },
+  proGateBtnText: { color: '#fff', fontWeight: '700', fontSize: FontSize.md },
+
   screen: { flex: 1, backgroundColor: Colors.background },
+  container: { flex: 1 },
   content: { padding: Spacing.lg, paddingTop: Spacing.xl, paddingBottom: Spacing.xxl },
   centeredContent: { flexGrow: 1, padding: Spacing.lg, paddingTop: Spacing.xl, justifyContent: 'center' },
   centered: { flex: 1, backgroundColor: Colors.background, justifyContent: 'center', alignItems: 'center' },

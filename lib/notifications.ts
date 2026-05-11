@@ -286,16 +286,3 @@ async function _doReschedule(): Promise<void> {
   await AsyncStorage.setItem(LAST_SCHED_KEY, new Date().toISOString());
 }
 
-// ── Email stubs ───────────────────────────────────────────────────────────────
-// Framework only — not wired up. Requires a Supabase edge function.
-
-export async function sendEmailBodyweightReminder(_userEmail: string): Promise<void> {
-  // TODO: POST to /functions/v1/send-reminder { type: 'bodyweight' }
-}
-
-export async function sendEmailTrainingReminder(
-  _userEmail: string,
-  _cardNames: string[],
-): Promise<void> {
-  // TODO: POST to /functions/v1/send-reminder { type: 'training', cards: _cardNames }
-}

@@ -1,12 +1,25 @@
 // app/_layout.tsx
 import { useEffect, useState } from 'react';
-import { Linking } from 'react-native';
+import { Linking, View, Text, StyleSheet, Pressable } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
+import * as Sentry from '@sentry/react-native';
 import { supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import { ThemeProvider, useTheme } from '../lib/ThemeContext';
+import ProBanner from '../components/ProBanner';
+
+const dsn = Constants.expoConfig?.extra?.sentryDsn as string | undefined;
+if (dsn) {
+  Sentry.init({
+    dsn,
+    tracesSampleRate: 0.2,
+    environment: __DEV__ ? 'development' : 'production',
+  });
+}
 
 function handleAuthUrl(url: string) {
   // PKCE flow (Supabase v2 default): bodybuilderapp://?code=xxx
@@ -28,6 +41,7 @@ function handleAuthUrl(url: string) {
 
 function RootLayoutInner() {
   const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null);
@@ -96,23 +110,59 @@ function RootLayoutInner() {
   }
 
   return (
-    <>
-      <StatusBar
-        style={isDark ? 'light' : 'dark'}
-        backgroundColor={colors.background}
-        translucent={false}
-      />
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name={screenName} />
-      </Stack>
-    </>
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
+      {/* Black bar fills the system status bar area (time / notifications / battery) */}
+      <StatusBar style="light" backgroundColor="#000" translucent />
+      <View style={{ height: insets.top, backgroundColor: '#000' }} />
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+        {screenName === '(tabs)' && <ProBanner />}
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name={screenName} />
+        </Stack>
+      </View>
+    </View>
   );
 }
 
-export default function RootLayout() {
+function ErrorFallback() {
   return (
-    <ThemeProvider>
-      <RootLayoutInner />
-    </ThemeProvider>
+    <View style={errorStyles.container}>
+      <Text style={errorStyles.title}>Something went wrong</Text>
+      <Text style={errorStyles.body}>Please restart the app.</Text>
+    </View>
   );
 }
+
+const errorStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  title: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  body: {
+    color: '#999',
+    fontSize: 15,
+    textAlign: 'center',
+  },
+});
+
+function RootLayout() {
+  return (
+    <Sentry.ErrorBoundary fallback={<ErrorFallback />}>
+      <ThemeProvider>
+        <RootLayoutInner />
+      </ThemeProvider>
+    </Sentry.ErrorBoundary>
+  );
+}
+
+export default Sentry.wrap(RootLayout);
