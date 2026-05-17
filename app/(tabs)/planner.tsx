@@ -39,8 +39,8 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase } from '../../lib/supabase';
-import { DEV_PRO_UNLOCKED } from '../../lib/proAccess';
 import { useColors } from '../../lib/ThemeContext';
+import { useProContext } from '../../lib/ProContext';
 import { type AppColors, Spacing, FontSize, Radius } from '../../constants/theme';
 import {
   TrainingPlan, DayCard, CycleDay,
@@ -48,6 +48,7 @@ import {
 } from '../../lib/types';
 import { generateProjectedDates } from '../../lib/planProjection';
 import { isoDate, formatShortDate, formatLongDate } from '../../lib/utils';
+import { forceRescheduleNotifications } from '../../lib/notifications';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -161,26 +162,15 @@ const chipStyles = StyleSheet.create({
 
 type PlannerState = 'loading' | 'no_plan' | 'building' | 'active';
 
+// PickerTarget must be declared outside the component so the type is stable
+type PickerTarget =
+  | { type: 'weekly'; day: WeekDayKey }
+  | { type: 'cycle'; dayId: string };
+
 export default function PlannerScreen() {
+  const { isPro } = useProContext();
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
-
-  if (!DEV_PRO_UNLOCKED) {
-    return (
-      <View style={styles.screen}>
-
-        <View style={styles.proGate}>
-          <Text style={styles.proGateTitle}>Training Planner</Text>
-          <Text style={styles.proGateSub}>
-            Build a structured training plan with weekly or cycle-based programming.
-          </Text>
-          <Pressable style={styles.proGateBtn} onPress={() => router.push('/subscription')}>
-            <Text style={styles.proGateBtnText}>View Pro Plan</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
 
   // ── Top-level state machine ──
   const [plannerState, setPlannerState] = useState<PlannerState>('loading');
@@ -198,16 +188,33 @@ export default function PlannerScreen() {
   ]);
 
   // ── Card picker ──
-  type PickerTarget =
-    | { type: 'weekly'; day: WeekDayKey }
-    | { type: 'cycle'; dayId: string };
   const [pickerVisible, setPickerVisible] = useState(false);
   const [pickerTarget, setPickerTarget]   = useState<PickerTarget | null>(null);
 
   // ── Save indicator ──
   const [saving, setSaving]             = useState(false);
 
-  useEffect(() => { loadActivePlan(); }, []);
+  useEffect(() => {
+    console.log('isPro in planner:', isPro);
+    if (!isPro) { setPlannerState('no_plan'); return; }
+    loadActivePlan();
+  }, [isPro]);
+
+  if (!isPro) {
+    return (
+      <View style={styles.screen}>
+        <View style={styles.proGate}>
+          <Text style={styles.proGateTitle}>Training Planner</Text>
+          <Text style={styles.proGateSub}>
+            Build a structured training plan with weekly or cycle-based programming.
+          </Text>
+          <Pressable style={styles.proGateBtn} onPress={() => router.push('/subscription')}>
+            <Text style={styles.proGateBtnText}>View Pro Plan</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   // ── Data functions ────────────────────────────────────────────────────────
 
@@ -258,18 +265,23 @@ export default function PlannerScreen() {
 
     setSaving(false);
     if (error) { Alert.alert('Error saving plan', error.message); return; }
-    setActivePlan(data as unknown as TrainingPlan);
+    const saved = data as unknown as TrainingPlan;
+    setActivePlan(saved);
     setPlannerState('active');
+    forceRescheduleNotifications(user.id, saved);
   }
 
   async function cancelPlan() {
     if (!activePlan) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
     const { error } = await supabase
       .from('training_plans')
       .update({ is_active: false, updated_at: new Date().toISOString() })
       .eq('id', activePlan.id);
     if (error) { Alert.alert('Error', error.message); return; }
     setActivePlan(null);
+    forceRescheduleNotifications(user.id, null);
   }
 
   // ── Builder navigation ────────────────────────────────────────────────────

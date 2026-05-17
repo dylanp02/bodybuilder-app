@@ -32,7 +32,10 @@ yarn-error.*
 
 # local env files
 .env
+.env.local
+.env.development
 .env*.local
+*.env
 
 # Sentry — contains auth token, must not be committed
 sentry.properties
@@ -43,3 +46,6 @@ sentry.properties
 # generated native folders
 /ios
 /android
+google-services.json 
+.claude/ 
+app/debug.tsx 

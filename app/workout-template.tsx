@@ -21,10 +21,10 @@ import {
 import { Redirect, router } from 'expo-router';
 import { supabase, getCurrentUser } from '../lib/supabase';
 import { useColors } from '../lib/ThemeContext';
+import { useProContext } from '../lib/ProContext';
 import { type AppColors, Spacing, FontSize, Radius } from '../constants/theme';
 import { Exercise, MuscleGroup } from '../lib/types';
 import { MUSCLE_GROUPS, EQUIPMENT_FILTERS } from '../lib/constants';
-import { DEV_PRO_UNLOCKED } from '../lib/proAccess';
 
 interface SetEntry {
   reps: string;
@@ -55,8 +55,7 @@ interface SavedTemplate {
 }
 
 export default function WorkoutTemplateScreen() {
-  if (!DEV_PRO_UNLOCKED) return <Redirect href="/subscription" />;
-
+  const { isPro } = useProContext();
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
 
@@ -87,7 +86,7 @@ export default function WorkoutTemplateScreen() {
   const [warmupWeight, setWarmupWeight] = useState('');
   const [warmupReps, setWarmupReps] = useState('');
 
-  useEffect(() => { loadTemplates(); }, []);
+  useEffect(() => { loadTemplates(); }, [isPro]);
 
   const loadTemplates = async () => {
     setLoadingTemplates(true);
@@ -300,6 +299,8 @@ export default function WorkoutTemplateScreen() {
     setEditingId(null);
   };
 
+  if (!isPro) return <Redirect href="/subscription" />;
+
   return (
     <>
       <View style={styles.screen}>
@@ -317,11 +318,6 @@ export default function WorkoutTemplateScreen() {
             <View style={styles.proBadge}>
               <Text style={styles.proBadgeText}>PRO</Text>
             </View>
-            {DEV_PRO_UNLOCKED && (
-              <View style={styles.devBadge}>
-                <Text style={styles.devBadgeText}>DEV</Text>
-              </View>
-            )}
           </View>
 
           {/* Saved templates list */}

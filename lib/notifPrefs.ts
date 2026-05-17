@@ -4,8 +4,10 @@ export interface NotifPrefs {
   deviceEnabled: boolean;
   deviceMuted: boolean;
   mutedUntil: string | null; // ISO timestamp; null = indefinite or not muted
-  morningHour: number;   // 6–10, default 7
-  afternoonHour: number; // 13–18, default 15
+  morningHour: number;       // 6–10, default 7
+  afternoonHour: number;     // 13–18, default 15
+  bodyweightEnabled: boolean;
+  trainingEnabled: boolean;
 }
 
 const KEY = 'notif_prefs';
@@ -16,6 +18,8 @@ const DEFAULTS: NotifPrefs = {
   mutedUntil: null,
   morningHour: 7,
   afternoonHour: 15,
+  bodyweightEnabled: true,
+  trainingEnabled: true,
 };
 
 export async function getNotifPrefs(): Promise<NotifPrefs> {

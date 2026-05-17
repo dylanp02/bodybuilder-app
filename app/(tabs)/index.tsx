@@ -6,8 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase, getCurrentUser } from '../../lib/supabase';
 import { useColors } from '../../lib/ThemeContext';
 import { type AppColors, Spacing, FontSize, Radius } from '../../constants/theme';
-// rescheduleNotifications is a no-op in Expo Go — requires a development build. See lib/notifications.ts.
-import { rescheduleNotifications, cancelAllScheduledNotifications } from '../../lib/notifications';
+import { cancelAllScheduledNotifications } from '../../lib/notifications';
 
 interface TodayWorkout {
   id: string;
@@ -37,7 +36,6 @@ export default function TodayScreen() {
   useFocusEffect(
     useCallback(() => {
       loadData();
-      rescheduleNotifications(); // throttled to once per 24h internally
     }, [])
   );
 

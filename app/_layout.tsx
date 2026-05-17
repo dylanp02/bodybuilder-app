@@ -10,7 +10,10 @@ import * as Sentry from '@sentry/react-native';
 import { supabase } from '../lib/supabase';
 import { Session } from '@supabase/supabase-js';
 import { ThemeProvider, useTheme } from '../lib/ThemeContext';
+import { ProContextProvider } from '../lib/ProContext';
 import ProBanner from '../components/ProBanner';
+import { setupNotificationChannel, registerPushToken, rescheduleNotifications } from '../lib/notifications';
+import { TrainingPlan } from '../lib/types';
 
 const dsn = Constants.expoConfig?.extra?.sentryDsn as string | undefined;
 if (dsn) {
@@ -45,6 +48,10 @@ function RootLayoutInner() {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    setupNotificationChannel();
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -95,6 +102,18 @@ function RootLayoutInner() {
         setOnboardingComplete(data?.onboarding_complete ?? false);
         setLoading(false);
       });
+    // Register push token and reschedule notifications on every authenticated launch.
+    registerPushToken(session.user.id);
+
+    supabase
+      .from('training_plans')
+      .select('id, user_id, plan_type, plan_name, duration_weeks, start_date, schedule, is_active')
+      .eq('user_id', session.user.id)
+      .eq('is_active', true)
+      .maybeSingle()
+      .then(({ data: plan }) => {
+        rescheduleNotifications(session.user.id, plan as TrainingPlan | null);
+      });
   }, [session?.user?.id]);
 
   if (loading) return null;
@@ -114,12 +133,15 @@ function RootLayoutInner() {
       {/* Black bar fills the system status bar area (time / notifications / battery) */}
       <StatusBar style="light" backgroundColor="#000" translucent />
       <View style={{ height: insets.top, backgroundColor: '#000' }} />
-      <View style={{ flex: 1, backgroundColor: colors.background }}>
-        {screenName === '(tabs)' && <ProBanner />}
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name={screenName} />
-        </Stack>
-      </View>
+      {/* Key by user ID so ProContextProvider remounts (and re-initialises RC) on login/logout */}
+      <ProContextProvider key={session?.user?.id ?? 'no-user'}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          {screenName === '(tabs)' && <ProBanner />}
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name={screenName} />
+          </Stack>
+        </View>
+      </ProContextProvider>
     </View>
   );
 }

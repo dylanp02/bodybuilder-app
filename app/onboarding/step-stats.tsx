@@ -3,6 +3,14 @@ import {
   View, Text, TextInput, Pressable, StyleSheet,
   KeyboardAvoidingView, Platform, Alert, ScrollView,
 } from 'react-native';
+
+type GenderKey = 'male' | 'female' | 'prefer_not_to_say';
+
+const GENDERS: { key: GenderKey; label: string }[] = [
+  { key: 'male',              label: 'Male' },
+  { key: 'female',            label: 'Female' },
+  { key: 'prefer_not_to_say', label: 'Prefer not to say' },
+];
 import { router } from 'expo-router';
 import { supabase, getCurrentUser } from '../../lib/supabase';
 import { useTheme } from '../../lib/ThemeContext';
@@ -17,6 +25,8 @@ export default function StepStatsScreen() {
   const [inches, setInches] = useState('');
   const [cm, setCm] = useState('');
   const [weight, setWeight] = useState('');
+  const [age, setAge] = useState('');
+  const [gender, setGender] = useState<GenderKey | null>(null);
   const [saving, setSaving] = useState(false);
 
   const handleContinue = async () => {
@@ -55,13 +65,22 @@ export default function StepStatsScreen() {
       weightLbs = lbs;
     }
 
+    let ageVal: number | null = null;
+    if (age.trim()) {
+      const parsed = parseInt(age.trim(), 10);
+      if (isNaN(parsed) || parsed < 13 || parsed > 100) {
+        Alert.alert('Invalid age', 'Enter an age between 13 and 100.'); return;
+      }
+      ageVal = parsed;
+    }
+
     setSaving(true);
     const user = await getCurrentUser();
     if (!user) { setSaving(false); return; }
 
     const [profileRes, logRes] = await Promise.all([
       supabase.from('profiles')
-        .update({ height_inches: heightInches, weight_lbs: weightLbs })
+        .update({ height_inches: heightInches, weight_lbs: weightLbs, age: ageVal, gender })
         .eq('id', user.id),
       supabase.from('weight_logs').upsert(
         { user_id: user.id, date: todayIso(), weight_lbs: weightLbs },
@@ -167,6 +186,41 @@ export default function StepStatsScreen() {
           <Text style={styles.hint}>This will be recorded as your first bodyweight entry.</Text>
         </View>
 
+        {/* Age */}
+        <View style={styles.field}>
+          <Text style={styles.label}>Age  <Text style={styles.optional}>(optional)</Text></Text>
+          <View style={styles.inputRow}>
+            <TextInput
+              style={[styles.input, styles.flex]}
+              placeholder="25"
+              placeholderTextColor={Colors.textDisabled}
+              value={age}
+              onChangeText={setAge}
+              keyboardType="number-pad"
+              maxLength={3}
+            />
+            <Text style={styles.unit}>yrs</Text>
+          </View>
+        </View>
+
+        {/* Gender */}
+        <View style={styles.field}>
+          <Text style={styles.label}>Gender  <Text style={styles.optional}>(optional)</Text></Text>
+          <View style={styles.pillRow}>
+            {GENDERS.map(g => (
+              <Pressable
+                key={g.key}
+                style={[styles.pill, gender === g.key && styles.pillActive]}
+                onPress={() => setGender(g.key)}
+              >
+                <Text style={[styles.pillText, gender === g.key && styles.pillTextActive]}>
+                  {g.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
         <Pressable
           style={[styles.primaryBtn, saving && styles.btnDisabled]}
           onPress={handleContinue}
@@ -221,6 +275,16 @@ const makeStyles = (Colors: AppColors) => StyleSheet.create({
   inputShort: { width: 72 },
   unit: { fontSize: FontSize.md, color: Colors.textSecondary, fontWeight: '500' },
   hint: { fontSize: FontSize.xs, color: Colors.textDisabled, marginTop: Spacing.xs },
+  optional: { fontSize: FontSize.xs, color: Colors.textDisabled, fontWeight: '400' },
+  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  pill: {
+    borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.full,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+    backgroundColor: Colors.surfaceAlt,
+  },
+  pillActive: { borderColor: Colors.primary, backgroundColor: Colors.primary },
+  pillText: { fontSize: FontSize.sm, fontWeight: '600', color: Colors.textSecondary },
+  pillTextActive: { color: '#fff' },
   segmented: {
     flexDirection: 'row', borderRadius: Radius.md,
     borderWidth: 1, borderColor: Colors.border,

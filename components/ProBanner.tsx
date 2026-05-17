@@ -1,16 +1,16 @@
-// components/ProBanner.tsx — plan status banner shown at the top of Pro-gated screens
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useColors } from '../lib/ThemeContext';
-import { DEV_PRO_UNLOCKED } from '../lib/proAccess';
+import { useProContext } from '../lib/ProContext';
 import { FontSize, Spacing } from '../constants/theme';
 import { type AppColors } from '../constants/theme';
 
 export default function ProBanner() {
   const Colors = useColors();
   const styles = makeStyles(Colors);
+  const { isPro } = useProContext();
 
-  if (DEV_PRO_UNLOCKED) {
+  if (isPro) {
     return (
       <View style={styles.proBanner}>
         <Text style={styles.proBannerText}>★  Pro Plan</Text>

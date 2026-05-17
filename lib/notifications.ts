@@ -15,24 +15,23 @@
  *   5. Install the resulting .apk / .ipa on your device and point it at your
  *      running Metro server (expo start).
  *
- * WHILE IN EXPO GO:
- *   The scheduling calls become no-ops and the rest of the app works normally.
- *   The warning/error in the console is benign — it comes from expo-notifications
- *   attempting push-token registration, which is unrelated to local scheduling.
- *
  * Docs: https://docs.expo.dev/develop/development-builds/introduction/
  */
 import * as Notifications from 'expo-notifications';
+import * as Sentry from '@sentry/react-native';
+import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { supabase, getCurrentUser } from './supabase';
+import { supabase } from './supabase';
 import { TrainingPlan, DayCard, WeeklySchedule, CycleSchedule, WeekDayKey } from './types';
 import { isoDate } from './utils';
-import { getNotifPrefs, setNotifPrefs, NotifPrefs } from './notifPrefs';
+import { getNotifPrefs } from './notifPrefs';
 
-const IDS_KEY = 'scheduled_notif_ids';
 const LAST_SCHED_KEY = 'notif_last_scheduled';
-const MAX_SLOTS = 58; // buffer below iOS 64 local notification cap
+const CHANNEL_ID     = 'bodybuilderapp-reminders';
+const MAX_TRAINING_DAYS = 14;
+
+// ── Notification handler ───────────────────────────────────────────────────────
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -44,44 +43,76 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// ── Channel setup ─────────────────────────────────────────────────────────────
+
+export async function setupNotificationChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+    name: 'LiftLedger Reminders',
+    importance: Notifications.AndroidImportance.HIGH,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#6C47FF',
+  });
+}
+
 // ── Permission ────────────────────────────────────────────────────────────────
 
 export async function requestNotificationPermission(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
-  if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
-      name: 'Default',
-      importance: Notifications.AndroidImportance.DEFAULT,
-    });
-  }
   const { status: existing } = await Notifications.getPermissionsAsync();
   if (existing === 'granted') return true;
-  const { status } = await Notifications.requestPermissionsAsync();
+  const { status } = await Notifications.requestPermissionsAsync({
+    ios: { allowAlert: true, allowBadge: true, allowSound: true },
+  });
   return status === 'granted';
 }
 
-// ── ID storage ────────────────────────────────────────────────────────────────
+// ── Push token registration ───────────────────────────────────────────────────
 
-async function saveIds(ids: string[]): Promise<void> {
-  await AsyncStorage.setItem(IDS_KEY, JSON.stringify(ids));
-}
-
-async function loadIds(): Promise<string[]> {
+export async function registerPushToken(userId: string): Promise<void> {
   try {
-    const raw = await AsyncStorage.getItem(IDS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+    const granted = await requestNotificationPermission();
+    if (!granted) return;
+
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
+    const { data: tokenData } = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined,
+    );
+
+    const { error } = await supabase
+      .from('profiles')
+      .update({ expo_push_token: tokenData })
+      .eq('id', userId);
+
+    if (error) throw error;
+    console.log('[Notifications] Push token registered');
+  } catch (e) {
+    console.log('[Notifications] Push token registration failed:', (e as Error).message);
+    Sentry.captureException(e, { tags: { context: 'registerPushToken' } });
+  }
 }
+
+// ── Cancel helpers ────────────────────────────────────────────────────────────
 
 export async function cancelAllScheduledNotifications(): Promise<void> {
-  const ids = await loadIds();
-  await Promise.all(ids.map(id =>
-    Notifications.cancelScheduledNotificationAsync(id).catch(() => {})
-  ));
-  await AsyncStorage.removeItem(IDS_KEY);
+  await Notifications.cancelAllScheduledNotificationsAsync();
+  await AsyncStorage.removeItem(LAST_SCHED_KEY);
 }
 
-// ── Plan day enumeration ──────────────────────────────────────────────────────
+async function cancelBodyweightReminder(): Promise<void> {
+  await Notifications.cancelScheduledNotificationAsync('bodyweight-reminder').catch(() => {});
+}
+
+async function cancelTrainingNotifications(): Promise<void> {
+  const scheduled = await Notifications.getAllScheduledNotificationsAsync();
+  await Promise.all(
+    scheduled
+      .filter(n => n.identifier.startsWith('training-'))
+      .map(n => Notifications.cancelScheduledNotificationAsync(n.identifier).catch(() => {})),
+  );
+}
+
+// ── Internal plan-day enumeration ─────────────────────────────────────────────
 
 const DOW: Record<number, WeekDayKey> = {
   0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat',
@@ -126,21 +157,8 @@ function getPlanDays(plan: TrainingPlan, limit: number): PlanDay[] {
   return result;
 }
 
-function trainingBody(cards: DayCard[]): string {
-  const names = cards.filter(c => c.category !== 'rest').map(c => c.name).join(' · ');
-  return names ? `${names} — let's get it done.` : 'Time to train.';
-}
-
-// ── Scheduling helpers ────────────────────────────────────────────────────────
-
-async function scheduleAt(date: Date, title: string, body: string): Promise<string> {
-  return Notifications.scheduleNotificationAsync({
-    content: { title, body },
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DATE,
-      date,
-    },
-  });
+function primaryCardNames(cards: DayCard[]): string {
+  return cards.filter(c => c.category !== 'rest').map(c => c.name).join(' · ') || 'Training';
 }
 
 function atHour(base: Date, hour: number): Date {
@@ -149,108 +167,132 @@ function atHour(base: Date, hour: number): Date {
   return d;
 }
 
-// ── Core scheduling logic ─────────────────────────────────────────────────────
+// ── Bodyweight reminder ────────────────────────────────────────────────────────
 
-export async function scheduleAllNotifications(
-  plan: TrainingPlan | null,
-  lastWeightIso: string | null,
-  prefs: NotifPrefs,
-): Promise<void> {
-  await cancelAllScheduledNotifications();
-  if (!prefs.deviceEnabled || prefs.deviceMuted) return;
+export async function scheduleBodyweightReminder(userId: string): Promise<void> {
+  await cancelBodyweightReminder();
 
-  const granted = await requestNotificationPermission();
-  if (!granted) return;
+  const { data } = await supabase
+    .from('weight_logs')
+    .select('date')
+    .eq('user_id', userId)
+    .order('date', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  const ids: string[] = [];
-  const now = new Date();
-  const today = new Date(now);
+  const today = new Date();
   today.setHours(0, 0, 0, 0);
-
-  // 1. Bodyweight reminder — fire weekly when not logged in 5+ days
-  const daysSince = lastWeightIso
-    ? Math.floor((today.getTime() - new Date(lastWeightIso + 'T00:00:00').getTime()) / 86400000)
+  const daysSince = data?.date
+    ? Math.floor((today.getTime() - new Date(data.date + 'T00:00:00').getTime()) / 86400000)
     : 999;
 
-  if (daysSince >= 5 && ids.length < MAX_SLOTS) {
-    // First occurrence: today if morning hasn't passed, else tomorrow
-    const firstDay = new Date(today);
-    if (atHour(today, prefs.morningHour) <= now) firstDay.setDate(firstDay.getDate() + 1);
+  if (daysSince < 5) return;
 
-    for (let week = 0; week < 8 && ids.length < MAX_SLOTS; week++) {
-      const trigger = atHour(firstDay, prefs.morningHour);
-      trigger.setDate(trigger.getDate() + week * 7);
-      if (trigger > now) {
-        ids.push(await scheduleAt(
-          trigger,
-          'Time to weigh in',
-          'You haven\'t logged your bodyweight recently. Tap to track your progress.',
-        ));
-      }
-    }
-  }
+  const prefs = await getNotifPrefs();
 
-  // 2. Training plan notifications
-  if (plan) {
-    const days = getPlanDays(plan, MAX_SLOTS);
-
-    for (const day of days) {
-      if (ids.length >= MAX_SLOTS) break;
-
-      const [dy, dm, dd] = day.date.split('-').map(Number);
-      const dayDate = new Date(dy, dm - 1, dd);
-
-      if (day.isTraining) {
-        // Morning (0600–1000 window, user-configurable within it)
-        const morning = atHour(dayDate, prefs.morningHour);
-        if (morning > now && ids.length < MAX_SLOTS) {
-          ids.push(await scheduleAt(
-            morning,
-            'Today is a training day',
-            trainingBody(day.cards),
-          ));
-        }
-        // Afternoon (1300–1800 window, user-configurable within it)
-        const afternoon = atHour(dayDate, prefs.afternoonHour);
-        if (afternoon > now && ids.length < MAX_SLOTS) {
-          ids.push(await scheduleAt(
-            afternoon,
-            'Still time to train',
-            "The day isn't over — get your workout in before it ends.",
-          ));
-        }
-      } else {
-        // Rest day — morning only
-        const morning = atHour(dayDate, prefs.morningHour);
-        if (morning > now && ids.length < MAX_SLOTS) {
-          ids.push(await scheduleAt(
-            morning,
-            'Rest day',
-            'Scheduled rest. Fuel up, sleep well, and come back stronger.',
-          ));
-        }
-      }
-    }
-  }
-
-  await saveIds(ids);
+  await Notifications.scheduleNotificationAsync({
+    identifier: 'bodyweight-reminder',
+    content: {
+      title: 'Time to log your weight 📊',
+      body: 'Keep your progress streak alive — log your weight today.',
+      sound: true,
+    },
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+      weekday: (new Date().getDay() + 1) || 1,
+      hour: prefs.morningHour,
+      minute: 0,
+    },
+  });
 }
 
-// ── Main entry point — throttled to once per 24h ──────────────────────────────
+// ── Training day notifications ────────────────────────────────────────────────
 
-export async function rescheduleNotifications(): Promise<void> {
+export async function scheduleTrainingNotifications(plan: TrainingPlan | null): Promise<void> {
+  await cancelTrainingNotifications();
+  if (!plan) return;
+
+  const prefs = await getNotifPrefs();
+  const days  = getPlanDays(plan, MAX_TRAINING_DAYS);
+  const now   = new Date();
+
+  for (const day of days) {
+    const [dy, dm, dd] = day.date.split('-').map(Number);
+    const dayDate = new Date(dy, dm - 1, dd);
+
+    if (day.isTraining) {
+      const names   = primaryCardNames(day.cards);
+      const morning = atHour(dayDate, prefs.morningHour);
+      if (morning > now) {
+        await Notifications.scheduleNotificationAsync({
+          identifier: `training-morning-${day.date}`,
+          content: {
+            title: `Today is a ${names} day 💪`,
+            body: `${names} is on the plan — let's get it done.`,
+            sound: true,
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: morning,
+          },
+        });
+      }
+
+      const afternoon = atHour(dayDate, prefs.afternoonHour);
+      if (afternoon > now) {
+        await Notifications.scheduleNotificationAsync({
+          identifier: `training-afternoon-${day.date}`,
+          content: {
+            title: 'Still time to train',
+            body: `${names} is on the plan today — the day isn't over yet.`,
+            sound: true,
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: afternoon,
+          },
+        });
+      }
+    } else {
+      const morning = atHour(dayDate, prefs.morningHour);
+      if (morning > now) {
+        await Notifications.scheduleNotificationAsync({
+          identifier: `training-morning-${day.date}`,
+          content: {
+            title: 'Rest day — recover well 🔄',
+            body: 'Scheduled rest. Fuel up, sleep well, and come back stronger.',
+            sound: true,
+          },
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.DATE,
+            date: morning,
+          },
+        });
+      }
+    }
+  }
+}
+
+// ── Orchestrator ───────────────────────────────────────────────────────────────
+
+export async function rescheduleNotifications(
+  userId: string,
+  plan: TrainingPlan | null,
+): Promise<void> {
   const lastRaw = await AsyncStorage.getItem(LAST_SCHED_KEY);
   if (lastRaw && Date.now() - new Date(lastRaw).getTime() < 86_400_000) return;
-  await _doReschedule();
+  await _doReschedule(userId, plan);
 }
 
-// Force re-schedule (bypasses 24h throttle — use after pref changes)
-export async function forceRescheduleNotifications(): Promise<void> {
+export async function forceRescheduleNotifications(
+  userId: string,
+  plan: TrainingPlan | null,
+): Promise<void> {
   await AsyncStorage.removeItem(LAST_SCHED_KEY);
-  await _doReschedule();
+  await _doReschedule(userId, plan);
 }
 
-async function _doReschedule(): Promise<void> {
+async function _doReschedule(userId: string, plan: TrainingPlan | null): Promise<void> {
   const prefs = await getNotifPrefs();
 
   if (!prefs.deviceEnabled || prefs.deviceMuted) {
@@ -258,31 +300,26 @@ async function _doReschedule(): Promise<void> {
     return;
   }
 
-  const user = await getCurrentUser();
-  if (!user) return;
+  const granted = await requestNotificationPermission();
+  if (!granted) return;
 
-  const [planRes, weightRes] = await Promise.all([
-    supabase
-      .from('training_plans')
-      .select('id, user_id, plan_type, plan_name, duration_weeks, start_date, schedule, is_active')
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .maybeSingle(),
-    supabase
-      .from('weight_logs')
-      .select('date')
-      .eq('user_id', user.id)
-      .order('date', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-  ]);
+  try {
+    if (prefs.bodyweightEnabled) {
+      await scheduleBodyweightReminder(userId);
+    } else {
+      await cancelBodyweightReminder();
+    }
 
-  await scheduleAllNotifications(
-    planRes.data as TrainingPlan | null,
-    weightRes.data?.date ?? null,
-    prefs,
-  );
+    if (prefs.trainingEnabled) {
+      await scheduleTrainingNotifications(plan);
+    } else {
+      await cancelTrainingNotifications();
+    }
 
-  await AsyncStorage.setItem(LAST_SCHED_KEY, new Date().toISOString());
+    await AsyncStorage.setItem(LAST_SCHED_KEY, new Date().toISOString());
+    console.log('[Notifications] Rescheduled');
+  } catch (e) {
+    console.log('[Notifications] Reschedule failed:', (e as Error).message);
+    Sentry.captureException(e, { tags: { context: '_doReschedule' } });
+  }
 }
-

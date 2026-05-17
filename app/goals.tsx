@@ -1,7 +1,7 @@
 // app/goals.tsx
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert,
+  View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { supabase, getCurrentUser } from '../lib/supabase';
@@ -10,6 +10,13 @@ import { type AppColors, Spacing, FontSize, Radius } from '../constants/theme';
 
 type GoalKey = 'aesthetics' | 'strength' | 'endurance' | 'general';
 type ExpKey = 'beginner' | 'intermediate' | 'advanced';
+type GenderKey = 'male' | 'female' | 'prefer_not_to_say';
+
+const GENDERS: { key: GenderKey; label: string }[] = [
+  { key: 'male',              label: 'Male' },
+  { key: 'female',            label: 'Female' },
+  { key: 'prefer_not_to_say', label: 'Prefer not to say' },
+];
 
 const GOALS: { key: GoalKey; label: string; sub: string }[] = [
   { key: 'aesthetics', label: 'Build Muscle',    sub: 'Hypertrophy and body composition' },
@@ -35,6 +42,8 @@ export default function GoalsScreen() {
 
   const [goal, setGoal] = useState<GoalKey | null>(null);
   const [experience, setExperience] = useState<ExpKey | null>(null);
+  const [age, setAge] = useState('');
+  const [gender, setGender] = useState<GenderKey | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -45,12 +54,14 @@ export default function GoalsScreen() {
     if (!user) { setLoading(false); return; }
     const { data } = await supabase
       .from('profiles')
-      .select('goal, experience_level')
+      .select('goal, experience_level, age, gender')
       .eq('id', user.id)
       .maybeSingle();
     if (data) {
       setGoal((data.goal as GoalKey) ?? null);
       setExperience((data.experience_level as ExpKey) ?? null);
+      setAge(data.age != null ? String(data.age) : '');
+      setGender((data.gender as GenderKey) ?? null);
     }
     setLoading(false);
   };
@@ -58,14 +69,22 @@ export default function GoalsScreen() {
   const saveProfile = useCallback(async (
     nextGoal: GoalKey | null,
     nextExp: ExpKey | null,
+    nextAge: string,
+    nextGender: GenderKey | null,
   ) => {
     if (!nextGoal || !nextExp) return;
     setSaving(true);
     const user = await getCurrentUser();
     if (!user) { setSaving(false); return; }
+    const ageVal = nextAge.trim() ? parseInt(nextAge.trim(), 10) : null;
     const { error } = await supabase
       .from('profiles')
-      .update({ goal: nextGoal, experience_level: nextExp })
+      .update({
+        goal: nextGoal,
+        experience_level: nextExp,
+        age: ageVal != null && !isNaN(ageVal) ? ageVal : null,
+        gender: nextGender,
+      })
       .eq('id', user.id);
     setSaving(false);
     if (error) Alert.alert('Error', error.message);
@@ -73,12 +92,17 @@ export default function GoalsScreen() {
 
   const selectGoal = (key: GoalKey) => {
     setGoal(key);
-    saveProfile(key, experience);
+    saveProfile(key, experience, age, gender);
   };
 
   const selectExperience = (key: ExpKey) => {
     setExperience(key);
-    saveProfile(goal, key);
+    saveProfile(goal, key, age, gender);
+  };
+
+  const selectGender = (key: GenderKey) => {
+    setGender(key);
+    saveProfile(goal, experience, age, key);
   };
 
   return (
@@ -144,6 +168,36 @@ export default function GoalsScreen() {
                 </Pressable>
               );
             })}
+
+            <Text style={[styles.subLabel, { marginTop: Spacing.lg }]}>Age</Text>
+            <View style={styles.ageRow}>
+              <TextInput
+                style={styles.ageInput}
+                placeholder="25"
+                placeholderTextColor={Colors.textDisabled}
+                value={age}
+                onChangeText={setAge}
+                onBlur={() => saveProfile(goal, experience, age, gender)}
+                keyboardType="number-pad"
+                maxLength={3}
+              />
+              <Text style={styles.ageUnit}>yrs</Text>
+            </View>
+
+            <Text style={[styles.subLabel, { marginTop: Spacing.lg }]}>Gender</Text>
+            <View style={styles.pillRow}>
+              {GENDERS.map(g => (
+                <Pressable
+                  key={g.key}
+                  style={[styles.pill, gender === g.key && styles.pillActive]}
+                  onPress={() => selectGender(g.key)}
+                >
+                  <Text style={[styles.pillText, gender === g.key && styles.pillTextActive]}>
+                    {g.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
           </>
         )}
       </View>
@@ -225,6 +279,24 @@ const makeStyles = (Colors: AppColors) => StyleSheet.create({
   },
   radioSelected: { borderColor: Colors.primary },
   radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.primary },
+
+  ageRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  ageInput: {
+    backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border,
+    borderRadius: Radius.md, padding: Spacing.md,
+    color: Colors.text, fontSize: FontSize.md, width: 100,
+  },
+  ageUnit: { fontSize: FontSize.md, color: Colors.textSecondary, fontWeight: '500' },
+
+  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
+  pill: {
+    borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.full,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+    backgroundColor: Colors.surfaceAlt,
+  },
+  pillActive: { borderColor: Colors.primary, backgroundColor: Colors.primary },
+  pillText: { fontSize: FontSize.sm, fontWeight: '600', color: Colors.textSecondary },
+  pillTextActive: { color: '#fff' },
 
   card: {
     backgroundColor: Colors.surface, borderRadius: Radius.lg,

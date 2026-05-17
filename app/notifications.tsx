@@ -14,6 +14,8 @@ import { useColors } from '../lib/ThemeContext';
 import { type AppColors, Spacing, FontSize, Radius } from '../constants/theme';
 import { getNotifPrefs, setNotifPrefs, type NotifPrefs } from '../lib/notifPrefs';
 import { forceRescheduleNotifications } from '../lib/notifications';
+import { getCurrentUser, supabase } from '../lib/supabase';
+import { TrainingPlan } from '../lib/types';
 
 const MORNING_HOURS = [6, 7, 8, 9, 10];
 const AFTERNOON_HOURS = [13, 14, 15, 16, 17, 18];
@@ -34,20 +36,37 @@ export default function NotificationsScreen() {
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
 
-  const [prefs, setPrefs] = useState<NotifPrefs | null>(null);
+  const [prefs, setPrefs]   = useState<NotifPrefs | null>(null);
   const [saving, setSaving] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [plan, setPlan]     = useState<TrainingPlan | null>(null);
 
-  useEffect(() => { getNotifPrefs().then(setPrefs); }, []);
+  useEffect(() => {
+    async function load() {
+      const [loadedPrefs, user] = await Promise.all([getNotifPrefs(), getCurrentUser()]);
+      setPrefs(loadedPrefs);
+      if (!user) return;
+      setUserId(user.id);
+      const { data } = await supabase
+        .from('training_plans')
+        .select('id, user_id, plan_type, plan_name, duration_weeks, start_date, schedule, is_active')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .maybeSingle();
+      setPlan(data as TrainingPlan | null);
+    }
+    load();
+  }, []);
 
   const update = useCallback(async (updates: Partial<NotifPrefs>) => {
-    if (!prefs) return;
+    if (!prefs || !userId) return;
     const next = { ...prefs, ...updates };
     setPrefs(next);
     setSaving(true);
     await setNotifPrefs(updates);
-    await forceRescheduleNotifications();
+    forceRescheduleNotifications(userId, plan);
     setSaving(false);
-  }, [prefs]);
+  }, [prefs, userId, plan]);
 
   const handleMuteToggle = useCallback((enabling: boolean) => {
     if (!enabling) {

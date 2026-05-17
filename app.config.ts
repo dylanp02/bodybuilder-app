@@ -42,11 +42,18 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     '@sentry/react-native/expo',
+    ['expo-build-properties', {
+      android: {
+        googleServicesFile: './google-services.json',
+      },
+    }],
   ],
   extra: {
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
     sentryDsn: process.env.SENTRY_DSN,
+    revenueCatApiKey: process.env.REVENUECAT_API_KEY,
+    supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     eas: {
       projectId: '0104b35d-80bc-4fe0-9b21-b3a12c58a26a',
     },

@@ -8,10 +8,10 @@ import {
 import { Redirect, router } from 'expo-router';
 import { supabase, getCurrentUser } from '../lib/supabase';
 import { useColors } from '../lib/ThemeContext';
+import { useProContext } from '../lib/ProContext';
 import { type AppColors, Spacing, FontSize, Radius } from '../constants/theme';
 import LineChart, { ChartPoint } from '../components/LineChart';
 import { formatLongDate } from '../lib/utils';
-import { DEV_PRO_UNLOCKED } from '../lib/proAccess';
 
 const FIELDS: { key: string; label: string }[] = [
   { key: 'neck_in',      label: 'Neck' },
@@ -29,8 +29,7 @@ type FieldValues = Record<string, string>;
 type MeasurementRow = { id: string; date: string } & Record<string, number | null>;
 
 export default function MeasurementsScreen() {
-  if (!DEV_PRO_UNLOCKED) return <Redirect href="/subscription" />;
-
+  const { isPro } = useProContext();
   const Colors = useColors();
   const styles = useMemo(() => makeStyles(Colors), [Colors]);
 
@@ -93,6 +92,8 @@ export default function MeasurementsScreen() {
     setExpandedKey(prev => (prev === key ? null : key));
   };
 
+  if (!isPro) return <Redirect href="/subscription" />;
+
   return (
     <View style={styles.screen}>
     <ScrollView
@@ -109,11 +110,6 @@ export default function MeasurementsScreen() {
         <View style={styles.proBadge}>
           <Text style={styles.proBadgeText}>PRO</Text>
         </View>
-        {DEV_PRO_UNLOCKED && (
-          <View style={styles.devBadge}>
-            <Text style={styles.devBadgeText}>DEV</Text>
-          </View>
-        )}
       </View>
       <Text style={styles.subtitle}>All measurements in inches</Text>
 
@@ -227,12 +223,6 @@ const makeStyles = (Colors: AppColors) => StyleSheet.create({
     paddingHorizontal: 7, paddingVertical: 2,
   },
   proBadgeText: { fontSize: FontSize.xs, color: '#fff', fontWeight: '700', letterSpacing: 0.5 },
-  devBadge: {
-    backgroundColor: Colors.warning + '33', borderRadius: Radius.sm,
-    paddingHorizontal: 7, paddingVertical: 2,
-    borderWidth: 1, borderColor: Colors.warning,
-  },
-  devBadgeText: { fontSize: FontSize.xs, color: Colors.warning, fontWeight: '700' },
   subtitle: { fontSize: FontSize.sm, color: Colors.textSecondary, marginBottom: Spacing.xl },
 
   card: {
