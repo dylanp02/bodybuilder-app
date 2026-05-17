@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "827203480427",
+    "project_id": "liftledger-ad421",
+    "storage_bucket": "liftledger-ad421.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:827203480427:android:1ffb871c6c404616be7a2e",
+        "android_client_info": {
+          "package_name": "com.dylanpalmer.liftledger"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDoQd4Ab0efOIeyj_mKXbpSm-z2JC4fbGE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
