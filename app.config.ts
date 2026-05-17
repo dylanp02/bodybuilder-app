@@ -1,4 +1,12 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import { ExpoConfig, ConfigContext } from 'expo/config';
+
+const googleServicesBase64 = process.env.GOOGLE_SERVICES_JSON_BASE64;
+if (googleServicesBase64) {
+  const googleServicesPath = path.join(__dirname, 'google-services.json');
+  fs.writeFileSync(googleServicesPath, Buffer.from(googleServicesBase64, 'base64').toString('utf8'));
+}
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -6,14 +14,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   slug: 'liftledger',
   version: '1.0.0',
   orientation: 'portrait',
-  icon: './assets/icon.png',
+  icon: './assets/LiftLedger_corrected.png',
   userInterfaceStyle: 'light',
   newArchEnabled: true,
   scheme: 'bodybuilderapp',
   splash: {
-    image: './assets/splash-icon.png',
+    image: './assets/splash.image.LiftLedger.png',
     resizeMode: 'contain',
-    backgroundColor: '#ffffff',
+    backgroundColor: '#0A0A0A',
   },
   ios: {
     supportsTablet: true,
@@ -23,9 +31,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     googleServicesFile: './google-services.json',
     package: 'com.dylanpalmer.liftledger',
     versionCode: 1,
+    icon: './assets/LiftLedger_corrected.png',
     adaptiveIcon: {
-      foregroundImage: './assets/adaptive-icon.png',
-      backgroundColor: '#ffffff',
+      foregroundImage: './assets/LiftLedger_transparent_corrected.png',
+      backgroundColor: '#0A0A0A',
+    },
+    // @ts-ignore — valid Expo manifest field, missing from @expo/config-types
+    notification: {
+      icon: './assets/LiftLedger_transparent_corrected.png',
+      color: '#6C47FF',
     },
     edgeToEdgeEnabled: true,
     predictiveBackGestureEnabled: false,
