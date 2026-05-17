@@ -49,3 +49,4 @@ sentry.properties
 google-services.json 
 .claude/ 
 app/debug.tsx 
+supabase/.temp/ 
