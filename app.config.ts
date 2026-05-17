@@ -20,6 +20,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     bundleIdentifier: 'com.dylanpalmer.liftledger',
   },
   android: {
+    googleServicesFile: './google-services.json',
     package: 'com.dylanpalmer.liftledger',
     versionCode: 1,
     adaptiveIcon: {
@@ -34,6 +35,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   },
   plugins: [
     'expo-router',
+    '@react-native-firebase/app',
     'expo-secure-store',
     [
       'expo-notifications',
@@ -42,11 +44,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     '@sentry/react-native/expo',
-    ['expo-build-properties', {
-      android: {
-        googleServicesFile: './google-services.json',
-      },
-    }],
+    'expo-build-properties',
   ],
   extra: {
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,

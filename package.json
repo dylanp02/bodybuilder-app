@@ -10,10 +10,12 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-firebase/app": "^24.0.0",
     "@sentry/react-native": "~7.2.0",
     "@supabase/supabase-js": "^2.105.3",
     "date-fns": "^4.1.0",
     "expo": "~54.0.33",
+    "expo-build-properties": "~1.0.10",
     "expo-clipboard": "~8.0.8",
     "expo-constants": "~18.0.13",
     "expo-dev-client": "~6.0.21",
@@ -35,7 +37,6 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
-    "@types/react-native": "^0.72.8",
     "typescript": "~5.9.2"
   },
   "private": true
